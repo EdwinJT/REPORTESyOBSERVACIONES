@@ -1,0 +1,33 @@
+{
+  "name": "Reportes y Observaciones de Equipos Mineros",
+  "short_name": "Reportes Mina",
+  "description": "PWA Offline-First para captura, compresión local y seguimiento de reportes y observaciones de equipos mineros en campo.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "lang": "es-PE",
+  "categories": ["productivity", "utilities", "business"],
+  "icons": [
+    {
+      "src": "./public/pwa-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./public/pwa-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./public/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

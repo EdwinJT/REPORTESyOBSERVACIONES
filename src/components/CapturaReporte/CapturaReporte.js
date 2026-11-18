@@ -1,0 +1,1783 @@
+/**
+ * M1 — Captura ("Nuevo reporte" e interfaz principal unificada tipo tabla/panel)
+ * Implementa:
+ * 1. Cuadro de Códigos de Equipos Creados (Selector + Filtro Rápido)
+ * 2. Panel de Creación de Reporte (Cámara, Adjuntar, 1-5 fotos + 1 video opcional, Calidad compresión, + Agregar otra observación)
+ * 3. Tabla Principal con Orden de Lectura Operativo (7 columnas con subsección de seguimiento ↳ alineada en Fecha, Vista Previa, Multimedia y Acciones, y Observación)
+ */
+
+import { localDb } from '../../db/localDb.js';
+import { formatBytes, getStorageUsageEstimate } from '../../db/storageManager.js';
+import { getFechaHoyPeru, getHoraActualPeru, esFechaValida } from '../../utils/datePeru.js';
+import { normalizeEquipmentCode } from '../../utils/codeNormalizer.js';
+import {
+  getAllEquipments,
+  createOrTouchEquipment
+} from '../../services/equipmentService.js';
+import {
+  compressPhotoFile,
+  validateVideoFile,
+  COMPRESSION_PROFILES
+} from '../../services/imageCompressor.js';
+
+export class CapturaReporteView {
+  constructor(rootEl, { onStatsChange } = {}) {
+    this.rootEl = rootEl;
+    this.onStatsChange = onStatsChange || (() => {});
+
+    // Estado de datos persistidos
+    this.equipos = [];
+    this.reportes = [];
+    this.objectUrls = [];
+
+    // Filtro activo en Cuadro de Equipos ("TODOS" o código específico)
+    this.filtroEquipo = 'TODOS';
+
+    // Estado del formulario "Nuevo Reporte"
+    this.form = {
+      codigo_equipo: '793F-05',
+      nuevo_codigo_input: '',
+      nueva_categoria_input: '',
+      fecha: getFechaHoyPeru(),
+      tipo: 'Observación',
+      prioridad: 'Alta',
+      calidad_compresion: 'estandar',
+      observacion: '',
+      fotos_locales: [], // 1 a 5 fotos
+      video_local: null, // 0 o 1 video
+      observaciones_adicionales: [] // "+ Agregar otra observación"
+    };
+
+    this.banner = null; // { type: 'error' | 'success', text: string }
+    this.isCompressing = false;
+    this.viewerModal = null; // { title, url, isVideo, meta }
+    this.followupModal = null; // { reporteId, codigo_equipo, fecha, estado_seguimiento, comentario, fotos_locales, video_local }
+  }
+
+  async init() {
+    await this.reloadData();
+    if (this.equipos.length > 0 && !this.form.codigo_equipo) {
+      this.form.codigo_equipo = this.equipos[0].codigo;
+    }
+    this.render();
+  }
+
+  revokeAllUrls() {
+    for (const url of this.objectUrls) {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        // ignore
+      }
+    }
+    this.objectUrls = [];
+  }
+
+  createObjectUrl(blob) {
+    if (!blob) return '';
+    const url = URL.createObjectURL(blob);
+    this.objectUrls.push(url);
+    return url;
+  }
+
+  async reloadData() {
+    this.equipos = await getAllEquipments();
+    const rawReportes = await localDb.reportes.toArray();
+    this.reportes = rawReportes.sort((a, b) => (b.creado_en || '').localeCompare(a.creado_en || ''));
+    const storageEst = await getStorageUsageEstimate();
+    const pendientes = this.reportes.filter((r) => r.estado === 'pendiente' || r.estado === 'error').length;
+    this.onStatsChange({
+      totalReportes: this.reportes.length,
+      pendientes,
+      storageEst
+    });
+  }
+
+  setBanner(type, text) {
+    this.banner = { type, text };
+    this.render();
+  }
+
+  // Generador rápido de foto de prueba (para probar en PC sin cámara o validar P3)
+  async generateSamplePhotoFile(codigo, calidad) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 2200;
+    canvas.height = 1400;
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 18;
+    ctx.strokeRect(40, 40, canvas.width - 80, canvas.height - 80);
+
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillRect(40, 40, canvas.width - 80, 140);
+
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 58px sans-serif';
+    ctx.fillText(`INSPECCIÓN DE CAMPO — EQUIPO ${codigo || 'SIN-CODIGO'}`, 85, 130);
+
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = 'bold 64px sans-serif';
+    ctx.fillText(`PLACA DE IDENTIFICACIÓN Y LECTURA DE CAMPO`, 90, 340);
+
+    ctx.fillStyle = '#090d16';
+    ctx.fillRect(90, 430, canvas.width - 180, 420);
+    ctx.strokeStyle = '#38bdf8';
+    ctx.lineWidth = 6;
+    ctx.strokeRect(90, 430, canvas.width - 180, 420);
+
+    ctx.fillStyle = '#fde047';
+    ctx.font = 'bold 54px monospace';
+    ctx.fillText(`CÓDIGO ACTIVO : ${codigo || '793F-05'}`, 140, 545);
+    ctx.fillText(`N° SERIE      : CAT0793FPE0098412`, 140, 645);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText(`FECHA LIMA    : ${this.form.fecha} (${getHoraActualPeru()})`, 140, 745);
+
+    ctx.fillStyle = '#cbd5e1';
+    ctx.font = '44px sans-serif';
+    ctx.fillText(
+      `Perfil solicitado: ${COMPRESSION_PROFILES[calidad]?.label || calidad} — Resolución original: 2200x1400 px`,
+      90,
+      1020
+    );
+
+    const rawBlob = await new Promise((r) => canvas.toBlob(r, 'image/jpeg', 0.96));
+    return new File([rawBlob], `captura_${(codigo || 'equipo').toLowerCase()}_${Date.now()}.jpg`, {
+      type: 'image/jpeg'
+    });
+  }
+
+  async handleAddPhotos(fileList, targetExtraObsIndex = null) {
+    if (!fileList || fileList.length === 0) return;
+
+    const currentPhotos =
+      targetExtraObsIndex === null
+        ? this.form.fotos_locales
+        : this.form.observaciones_adicionales[targetExtraObsIndex].fotos_locales;
+
+    if (currentPhotos.length + fileList.length > 5) {
+      this.setBanner(
+        'error',
+        `Límite multimedia (Escenario P4): Puedes adjuntar entre 1 y máximo 5 fotos por sección (actualmente tienes ${currentPhotos.length}).`
+      );
+      return;
+    }
+
+    this.isCompressing = true;
+    this.render();
+
+    try {
+      for (const file of Array.from(fileList)) {
+        const compressed = await compressPhotoFile(file, this.form.calidad_compresion);
+        currentPhotos.push({
+          indice: currentPhotos.length + 1,
+          ...compressed
+        });
+      }
+      // Reindexar 1..N
+      currentPhotos.forEach((f, idx) => {
+        f.indice = idx + 1;
+      });
+      this.banner = {
+        type: 'success',
+        text: `Foto(s) comprimida(s) correctamente con perfil "${
+          COMPRESSION_PROFILES[this.form.calidad_compresion].label
+        }".`
+      };
+    } catch (err) {
+      this.banner = {
+        type: 'error',
+        text: err.message || 'Error al comprimir la imagen.'
+      };
+    } finally {
+      this.isCompressing = false;
+      this.render();
+    }
+  }
+
+  handleAttachVideo(file, targetExtraObsIndex = null) {
+    if (!file) return;
+    const validation = validateVideoFile(file);
+    if (!validation.valid) {
+      this.setBanner('error', validation.error);
+      return;
+    }
+
+    if (targetExtraObsIndex === null) {
+      this.form.video_local = validation.videoLocal;
+    } else {
+      this.form.observaciones_adicionales[targetExtraObsIndex].video_local = validation.videoLocal;
+    }
+
+    this.setBanner(
+      'success',
+      `Video corto adjuntado (${formatBytes(validation.videoLocal.peso_bytes)}).`
+    );
+  }
+
+  async handleCreateEquipmentCode() {
+    const raw = this.form.nuevo_codigo_input;
+    const normalized = normalizeEquipmentCode(raw);
+    if (!normalized) {
+      this.setBanner('error', 'Escribe un código de equipo válido para crear (ej. "793f 05").');
+      return;
+    }
+
+    try {
+      const { record, es_nuevo_codigo } = await createOrTouchEquipment(
+        normalized,
+        this.form.nueva_categoria_input
+      );
+      this.form.codigo_equipo = record.codigo;
+      this.form.nuevo_codigo_input = '';
+      this.form.nueva_categoria_input = '';
+      await this.reloadData();
+
+      this.setBanner(
+        'success',
+        es_nuevo_codigo
+          ? `Código "${record.codigo}" normalizado y creado. Ya está disponible en la lista desplegable y en el cuadro superior.`
+          : `Código "${record.codigo}" seleccionado y actualizado.`
+      );
+    } catch (err) {
+      this.setBanner('error', err.message);
+    }
+  }
+
+  addExtraObservationSlot() {
+    this.form.observaciones_adicionales.push({
+      id: crypto.randomUUID(),
+      modo: 'seguimiento', // 'seguimiento' (se agrega como ↳ en el mismo reporte) | 'independiente' (crea fila aparte)
+      fecha: getFechaHoyPeru(),
+      estado_seguimiento: 'Sigue observación',
+      comentario: '',
+      fotos_locales: [],
+      video_local: null
+    });
+    this.render();
+  }
+
+  removeExtraObservationSlot(idx) {
+    this.form.observaciones_adicionales.splice(idx, 1);
+    this.render();
+  }
+
+  async handleSaveReport() {
+    // Validaciones obligatorias (Escenario P4)
+    const codigo = normalizeEquipmentCode(this.form.codigo_equipo);
+    if (!codigo) {
+      this.setBanner('error', 'Validación P4: Debes seleccionar o crear un Código de Equipo antes de guardar.');
+      return;
+    }
+
+    if (!esFechaValida(this.form.fecha)) {
+      this.setBanner('error', 'Validación P4: La fecha debe tener formato válido AAAA-MM-DD.');
+      return;
+    }
+
+    if (this.form.fotos_locales.length < 1 || this.form.fotos_locales.length > 5) {
+      this.setBanner(
+        'error',
+        'Validación P4: Todo reporte requiere mínimo 1 foto y máximo 5 fotos antes de guardarse.'
+      );
+      return;
+    }
+
+    if (!this.form.observacion.trim()) {
+      this.setBanner('error', 'Por favor ingresa el detalle en la Observación Principal.');
+      return;
+    }
+
+    const { es_nuevo_codigo } = await createOrTouchEquipment(codigo);
+    const nowIso = new Date().toISOString();
+
+    // Separar las observaciones adicionales que van como subsección de seguimiento (↳)
+    // de las que el usuario marcó como otra observación independiente del mismo equipo
+    const seguimientosIntegrados = [];
+    const observacionesIndependientes = [];
+
+    for (const extra of this.form.observaciones_adicionales) {
+      if (!extra.comentario.trim() && extra.fotos_locales.length === 0 && !extra.video_local) {
+        continue;
+      }
+      if (extra.modo === 'independiente') {
+        observacionesIndependientes.push(extra);
+      } else {
+        seguimientosIntegrados.push({
+          id: extra.id || crypto.randomUUID(),
+          fecha: extra.fecha || this.form.fecha,
+          estado_seguimiento: extra.estado_seguimiento || 'Sigue observación',
+          comentario: extra.comentario.trim() || 'Seguimiento registrado en campo.',
+          fotos_locales: extra.fotos_locales,
+          video_local: extra.video_local
+        });
+      }
+    }
+
+    const nuevoReporte = {
+      id: crypto.randomUUID(),
+      codigo_equipo: codigo,
+      es_nuevo_codigo,
+      fecha: this.form.fecha,
+      tipo: this.form.tipo,
+      prioridad: this.form.prioridad,
+      observacion: this.form.observacion.trim(),
+      calidad_compresion: this.form.calidad_compresion,
+      fotos_locales: this.form.fotos_locales,
+      video_local: this.form.video_local,
+      seguimientos: seguimientosIntegrados,
+      fotos_rutas: [],
+      video_ruta: null,
+      estado: 'pendiente',
+      ultimo_error: null,
+      intentos_sync: 0,
+      creado_por: null,
+      creado_en: nowIso,
+      actualizado_en: nowIso,
+      dispositivo: navigator.userAgent.includes('Mobile') ? 'Móvil Campo' : 'PC / Terminal Mina'
+    };
+
+    await localDb.reportes.put(nuevoReporte);
+
+    // Si hay observaciones marcadas como fila independiente para el mismo equipo, guardarlas también
+    for (const ind of observacionesIndependientes) {
+      const fotosInd = ind.fotos_locales.length > 0 ? ind.fotos_locales : this.form.fotos_locales;
+      const repAdicional = {
+        id: crypto.randomUUID(),
+        codigo_equipo: codigo,
+        es_nuevo_codigo: false,
+        fecha: ind.fecha || this.form.fecha,
+        tipo: this.form.tipo,
+        prioridad: this.form.prioridad,
+        observacion: ind.comentario.trim(),
+        calidad_compresion: this.form.calidad_compresion,
+        fotos_locales: fotosInd,
+        video_local: ind.video_local,
+        seguimientos: [],
+        fotos_rutas: [],
+        video_ruta: null,
+        estado: 'pendiente',
+        ultimo_error: null,
+        intentos_sync: 0,
+        creado_por: null,
+        creado_en: new Date(Date.now() + 10).toISOString(),
+        actualizado_en: new Date(Date.now() + 10).toISOString(),
+        dispositivo: navigator.userAgent.includes('Mobile') ? 'Móvil Campo' : 'PC / Terminal Mina'
+      };
+      await localDb.reportes.put(repAdicional);
+    }
+
+    // Limpiar formulario manteniendo el equipo activo y la fecha de Perú
+    this.form.observacion = '';
+    this.form.fotos_locales = [];
+    this.form.video_local = null;
+    this.form.observaciones_adicionales = [];
+    this.form.fecha = getFechaHoyPeru();
+
+    await this.reloadData();
+    this.setBanner(
+      'success',
+      `Reporte del equipo ${codigo} guardado en el dispositivo (IndexedDB) en estado "pendiente".`
+    );
+  }
+
+  // Cambiar (🔄 Cambiar) una foto o video existente en la Tabla Principal (Inicial o Seguimiento)
+  async handleReplaceMediaInTable(reporteId, segIndex, mediaType, fotoIdx, file) {
+    if (!file) return;
+    const reporte = await localDb.reportes.get(reporteId);
+    if (!reporte) return;
+
+    try {
+      const targetContainer =
+        segIndex === null ? reporte : (reporte.seguimientos || [])[segIndex];
+      if (!targetContainer) return;
+
+      if (mediaType === 'video') {
+        const val = validateVideoFile(file);
+        if (!val.valid) {
+          this.setBanner('error', val.error);
+          return;
+        }
+        targetContainer.video_local = val.videoLocal;
+      } else {
+        const compressed = await compressPhotoFile(file, reporte.calidad_compresion || 'estandar');
+        if (!targetContainer.fotos_locales || targetContainer.fotos_locales.length === 0) {
+          targetContainer.fotos_locales = [{ indice: 1, ...compressed }];
+        } else {
+          const idx = fotoIdx ?? 0;
+          targetContainer.fotos_locales[idx] = {
+            indice: idx + 1,
+            ...compressed
+          };
+        }
+      }
+
+      reporte.actualizado_en = new Date().toISOString();
+      await localDb.reportes.put(reporte);
+      await this.reloadData();
+      this.setBanner('success', `Archivo multimedia actualizado en el equipo ${reporte.codigo_equipo}.`);
+    } catch (err) {
+      this.setBanner('error', err.message || 'No se pudo cambiar el archivo.');
+    }
+  }
+
+  // Descargar (⬇️ Descargar) foto o video de la Tabla Principal (Inicial o Seguimiento)
+  handleDownloadMedia(blob, filename) {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename || 'evidencia_equipo.jpg';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+  }
+
+  // Guardar un nuevo seguimiento (↳) desde el modal rápido de la tabla
+  async handleSaveFollowupModal() {
+    if (!this.followupModal) return;
+    const { reporteId, fecha, estado_seguimiento, comentario, fotos_locales, video_local } =
+      this.followupModal;
+
+    if (!comentario.trim()) {
+      this.setBanner('error', 'Escribe el comentario del seguimiento posterior.');
+      return;
+    }
+
+    const reporte = await localDb.reportes.get(reporteId);
+    if (!reporte) return;
+
+    if (!Array.isArray(reporte.seguimientos)) {
+      reporte.seguimientos = [];
+    }
+
+    reporte.seguimientos.push({
+      id: crypto.randomUUID(),
+      fecha: fecha || getFechaHoyPeru(),
+      estado_seguimiento: estado_seguimiento || 'Sigue observación',
+      comentario: comentario.trim(),
+      fotos_locales: fotos_locales || [],
+      video_local: video_local || null
+    });
+
+    reporte.actualizado_en = new Date().toISOString();
+    await localDb.reportes.put(reporte);
+
+    this.followupModal = null;
+    await this.reloadData();
+    this.setBanner(
+      'success',
+      `Seguimiento (↳) agregado al reporte de ${reporte.codigo_equipo}.`
+    );
+  }
+
+  render() {
+    this.revokeAllUrls();
+
+    const reportesFiltrados =
+      this.filtroEquipo === 'TODOS'
+        ? this.reportes
+        : this.reportes.filter((r) => r.codigo_equipo === this.filtroEquipo);
+
+    const conteoPorEquipo = {};
+    for (const r of this.reportes) {
+      conteoPorEquipo[r.codigo_equipo] = (conteoPorEquipo[r.codigo_equipo] || 0) + 1;
+    }
+
+    const normPreview = normalizeEquipmentCode(this.form.nuevo_codigo_input);
+
+    this.rootEl.innerHTML = `
+      <div class="main-container">
+        ${
+          this.banner
+            ? `
+          <div class="alert-banner ${this.banner.type === 'error' ? 'alert-error' : 'alert-success'}">
+            <span>${this.banner.type === 'error' ? '⚠️' : '✅'} ${this.escapeHtml(this.banner.text)}</span>
+            <button type="button" class="btn-mine btn-sm-mine" id="btn-close-banner">Cerrar</button>
+          </div>
+        `
+            : ''
+        }
+
+        <!-- 1. CUADRO DE CÓDIGOS DE EQUIPOS CREADOS (SELECTOR + FILTRO RÁPIDO) -->
+        <section class="section-panel" aria-label="Cuadro de Códigos de Equipos Creados">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">🚜 1. Cuadro de Códigos de Equipos Creados (Selector + Filtro Rápido)</h2>
+              <p class="brand-subtitle">
+                Toca cualquier código para <strong>filtrar la tabla inferior</strong> por ese equipo y <strong>preseleccionarlo</strong> automáticamente en "Nuevo Reporte".
+              </p>
+            </div>
+            <span class="badge badge-pending">Total códigos: ${this.equipos.length}</span>
+          </div>
+
+          <div class="equipment-chips-grid">
+            <button
+              type="button"
+              class="equipment-chip ${this.filtroEquipo === 'TODOS' ? 'active' : ''}"
+              data-filter-code="TODOS"
+            >
+              <span>📋 Todos</span>
+              <span class="chip-count">${this.reportes.length}</span>
+            </button>
+
+            ${this.equipos
+              .map(
+                (eq) => `
+              <button
+                type="button"
+                class="equipment-chip ${this.filtroEquipo === eq.codigo ? 'active' : ''}"
+                data-filter-code="${this.escapeHtml(eq.codigo)}"
+                title="${this.escapeHtml(eq.categoria || 'Equipo minero')}"
+              >
+                <span>🔧 ${this.escapeHtml(eq.codigo)}</span>
+                <span class="chip-count">${conteoPorEquipo[eq.codigo] || 0}</span>
+              </button>
+            `
+              )
+              .join('')}
+          </div>
+        </section>
+
+        <!-- 2. PANEL DE CREACIÓN DE REPORTE ("NUEVO REPORTE") -->
+        <section class="section-panel" aria-label="Panel de Creación de Reporte">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">📝 2. Panel de Creación de Reporte ("Nuevo Reporte" — M1)</h2>
+              <p class="brand-subtitle">
+                Diseñado para operación con guantes (botones ≥ 48 px). Captura de 1 a 5 fotos comprimidas + 1 video corto opcional, código normalizado y múltiples observaciones.
+              </p>
+            </div>
+            <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+              <button type="button" class="btn-mine btn-sm-mine btn-secondary" id="btn-test-night-p1" title="Simula las 23:30 h en Lima (04:30 UTC del día siguiente) para verificar Escenario P1">
+                🌙 Probar Guardia Nocturna 23:30 h (P1)
+              </button>
+            </div>
+          </div>
+
+          <div class="form-grid">
+            <!-- Selector desplegable + Creación manual de Código de Equipo -->
+            <div class="field-group">
+              <label class="field-label" for="select-codigo-equipo">
+                <span>Código de Equipo (Lista Desplegable) *</span>
+                <span style="color:var(--accent-amber)">Activo: ${this.escapeHtml(this.form.codigo_equipo)}</span>
+              </label>
+              <select id="select-codigo-equipo" class="select-mine">
+                ${this.equipos
+                  .map(
+                    (eq) => `
+                  <option value="${this.escapeHtml(eq.codigo)}" ${
+                      eq.codigo === this.form.codigo_equipo ? 'selected' : ''
+                    }>
+                    ${this.escapeHtml(eq.codigo)} — ${this.escapeHtml(eq.categoria || 'Equipo')}
+                  </option>
+                `
+                  )
+                  .join('')}
+              </select>
+
+              <div class="new-code-inline">
+                <input
+                  type="text"
+                  id="input-nuevo-codigo"
+                  class="input-mine"
+                  placeholder="¿Equipo nuevo? Ej: 793f 05"
+                  value="${this.escapeHtml(this.form.nuevo_codigo_input)}"
+                />
+                <button type="button" class="btn-mine btn-primary" id="btn-crear-codigo">
+                  + Crear
+                </button>
+              </div>
+              <div class="norm-preview">
+                ${
+                  normPreview
+                    ? `Se normalizará como: <strong>${this.escapeHtml(normPreview)}</strong>`
+                    : 'Escribe minúsculas o espacios (ej. "793f 05" → "793F-05") y toca "+ Crear".'
+                }
+              </div>
+            </div>
+
+            <!-- Fecha en America/Lima + Tipo + Prioridad -->
+            <div class="field-group">
+              <label class="field-label" for="input-fecha-peru">
+                <span>Fecha Local Perú (America/Lima) *</span>
+                <span style="font-size:0.78rem; color:var(--accent-blue);">Hora Lima: ${getHoraActualPeru()}</span>
+              </label>
+              <input
+                type="date"
+                id="input-fecha-peru"
+                class="input-mine"
+                value="${this.escapeHtml(this.form.fecha)}"
+              />
+
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; margin-top: 0.45rem;">
+                <div>
+                  <label class="field-label" for="select-tipo">Tipo *</label>
+                  <select id="select-tipo" class="select-mine">
+                    <option value="Observación" ${this.form.tipo === 'Observación' ? 'selected' : ''}>🔍 Observación</option>
+                    <option value="Reporte" ${this.form.tipo === 'Reporte' ? 'selected' : ''}>📄 Reporte</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="field-label" for="select-prioridad">Prioridad *</label>
+                  <select id="select-prioridad" class="select-mine">
+                    <option value="Alta" ${this.form.prioridad === 'Alta' ? 'selected' : ''}>🔴 Alta</option>
+                    <option value="Media" ${this.form.prioridad === 'Media' ? 'selected' : ''}>🟡 Media</option>
+                    <option value="Baja" ${this.form.prioridad === 'Baja' ? 'selected' : ''}>🔵 Baja</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Calidad de Compresión de Foto -->
+            <div class="field-group">
+              <label class="field-label" for="select-calidad">
+                <span>Calidad de Compresión de Foto (P3) *</span>
+              </label>
+              <select id="select-calidad" class="select-mine">
+                <option value="estandar" ${this.form.calidad_compresion === 'estandar' ? 'selected' : ''}>
+                  ⚡ Estándar (&lt; 400 KB / máx. 1600 px) — Recomendado
+                </option>
+                <option value="alta" ${this.form.calidad_compresion === 'alta' ? 'selected' : ''}>
+                  🔎 Alta Nitidez (&lt; 800 KB / máx. 2048 px) — Placas / Series / Fisuras
+                </option>
+              </select>
+              <div class="norm-preview">
+                Toda foto se comprime en el dispositivo <strong>antes</strong> de guardarse en IndexedDB.
+              </div>
+            </div>
+          </div>
+
+          <!-- Captura Multimedia Inicial (1 a 5 fotos + 1 video corto opcional) -->
+          <div class="media-capture-box">
+            <div class="field-label" style="margin-bottom: 0.65rem;">
+              <span>📸 Multimedia Inicial del Reporte: Fotos (${this.form.fotos_locales.length} / 5 obligatorias) y Video Opcional (${this.form.video_local ? '1 / 1' : '0 / 1'})</span>
+              ${this.isCompressing ? `<span style="color:var(--accent-amber)">⏳ Comprimiendo imagen...</span>` : ''}
+            </div>
+
+            <!-- Inputs ocultos para Cámara, Galería y Video -->
+            <input type="file" id="file-camera-main" accept="image/*" capture="environment" style="display:none" />
+            <input type="file" id="file-attach-main" accept="image/*" multiple style="display:none" />
+            <input type="file" id="file-video-main" accept="video/mp4,video/webm,video/quicktime" style="display:none" />
+
+            <div class="media-buttons-row">
+              <button
+                type="button"
+                class="btn-mine btn-primary"
+                id="btn-camera-main"
+                ${this.form.fotos_locales.length >= 5 ? 'disabled' : ''}
+              >
+                📷 Cámara (${this.form.fotos_locales.length}/5)
+              </button>
+
+              <button
+                type="button"
+                class="btn-mine btn-secondary"
+                id="btn-attach-main"
+                ${this.form.fotos_locales.length >= 5 ? 'disabled' : ''}
+              >
+                📎 Adjuntar Fotos
+              </button>
+
+              <button
+                type="button"
+                class="btn-mine"
+                id="btn-video-main"
+              >
+                🎥 ${this.form.video_local ? 'Cambiar Video Opcional' : 'Adjuntar Video (Máx 20 MB)'}
+              </button>
+
+              <button
+                type="button"
+                class="btn-mine btn-sm-mine"
+                id="btn-sim-photo-main"
+                ${this.form.fotos_locales.length >= 5 ? 'disabled' : ''}
+                title="Genera una foto de alta resolución de placa minera y la pasa por el compresor real"
+              >
+                🧪 Generar Foto Placa de Prueba
+              </button>
+            </div>
+
+            <!-- Vista previa de las 1 a 5 fotos y video opcional -->
+            ${
+              this.form.fotos_locales.length > 0 || this.form.video_local
+                ? `
+              <div class="thumbs-list">
+                ${this.form.fotos_locales
+                  .map((foto, idx) => {
+                    const url = this.createObjectUrl(foto.blob);
+                    return `
+                    <div class="thumb-card">
+                      <div class="thumb-img-wrap" data-preview-main-photo="${idx}" title="Toca para ampliar">
+                        <img src="${url}" alt="Foto ${idx + 1}" />
+                      </div>
+                      <div class="thumb-meta">
+                        <strong>Foto #${idx + 1} (${foto.ancho}×${foto.alto} px)</strong>
+                        <span style="color:var(--accent-green); font-weight:700;">
+                          Peso final: ${formatBytes(foto.peso_bytes)}
+                        </span>
+                        <span>Original: ${formatBytes(foto.peso_original_bytes)}</span>
+                      </div>
+                      <button type="button" class="btn-mine btn-sm-mine btn-danger" data-remove-main-photo="${idx}">
+                        ✕ Quitar
+                      </button>
+                    </div>
+                  `;
+                  })
+                  .join('')}
+
+                ${
+                  this.form.video_local
+                    ? (() => {
+                        const vUrl = this.createObjectUrl(this.form.video_local.blob);
+                        return `
+                        <div class="thumb-card">
+                          <div class="thumb-img-wrap">
+                            <video src="${vUrl}" controls preload="metadata"></video>
+                          </div>
+                          <div class="thumb-meta">
+                            <strong>🎥 Video Opcional</strong>
+                            <span style="color:var(--accent-blue); font-weight:700;">
+                              Peso: ${formatBytes(this.form.video_local.peso_bytes)}
+                            </span>
+                            <span>${this.escapeHtml(this.form.video_local.mime_type)}</span>
+                          </div>
+                          <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-remove-main-video">
+                            ✕ Quitar Video
+                          </button>
+                        </div>
+                      `;
+                      })()
+                    : ''
+                }
+              </div>
+            `
+                : ''
+            }
+          </div>
+
+          <!-- Observación Principal y botón "+ Agregar otra observación" -->
+          <div class="field-group" style="margin-top: 1rem;">
+            <label class="field-label" for="textarea-observacion">
+              <span>📌 Observación Principal / Hallazgo en Campo *</span>
+            </label>
+            <textarea
+              id="textarea-observacion"
+              class="textarea-mine"
+              placeholder="Describe el hallazgo, componente, código en placa o condición operativa..."
+            >${this.escapeHtml(this.form.observacion)}</textarea>
+          </div>
+
+          <!-- Lista dinámica de "+ Agregar otra observación" -->
+          ${
+            this.form.observaciones_adicionales.length > 0
+              ? `
+            <div class="extra-obs-list">
+              ${this.form.observaciones_adicionales
+                .map((extra, idx) => {
+                  return `
+                  <div class="extra-obs-card">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-bottom:0.65rem;">
+                      <strong>↳ Observación / Seguimiento Adicional #${idx + 1}</strong>
+                      <button type="button" class="btn-mine btn-sm-mine btn-danger" data-remove-extra="${idx}">
+                        ✕ Quitar esta observación
+                      </button>
+                    </div>
+
+                    <div class="form-grid" style="margin-bottom:0.65rem;">
+                      <div class="field-group">
+                        <label class="field-label">Modo de registro</label>
+                        <select class="select-mine" data-extra-modo="${idx}">
+                          <option value="seguimiento" ${extra.modo === 'seguimiento' ? 'selected' : ''}>
+                            ↳ Subsección de Seguimiento alineada en este reporte
+                          </option>
+                          <option value="independiente" ${extra.modo === 'independiente' ? 'selected' : ''}>
+                            📌 Fila de observación adicional para ${this.escapeHtml(this.form.codigo_equipo)}
+                          </option>
+                        </select>
+                      </div>
+
+                      <div class="field-group">
+                        <label class="field-label">Fecha de este punto (America/Lima)</label>
+                        <input type="date" class="input-mine" data-extra-fecha="${idx}" value="${this.escapeHtml(extra.fecha)}" />
+                      </div>
+
+                      <div class="field-group">
+                        <label class="field-label">Estado de la observación</label>
+                        <select class="select-mine" data-extra-estado="${idx}">
+                          <option value="Sigue observación" ${extra.estado_seguimiento === 'Sigue observación' ? 'selected' : ''}>
+                            ⚠️ Sigue observación
+                          </option>
+                          <option value="Observación controlada" ${extra.estado_seguimiento === 'Observación controlada' ? 'selected' : ''}>
+                            🛠️ En monitoreo / controlada
+                          </option>
+                          <option value="Levantada" ${extra.estado_seguimiento === 'Levantada' ? 'selected' : ''}>
+                            ✅ Levantada / corregida
+                          </option>
+                        </select>
+                      </div>
+                    </div>
+
+                    <div class="field-group" style="margin-bottom:0.65rem;">
+                      <label class="field-label">Comentario / Detalle de esta observación adicional</label>
+                      <textarea class="textarea-mine" data-extra-comentario="${idx}" placeholder="Escribe el comentario de seguimiento o la observación adicional...">${this.escapeHtml(extra.comentario)}</textarea>
+                    </div>
+
+                    <div class="media-buttons-row">
+                      <input type="file" id="file-extra-cam-${idx}" accept="image/*" capture="environment" style="display:none" />
+                      <input type="file" id="file-extra-att-${idx}" accept="image/*" multiple style="display:none" />
+                      <button type="button" class="btn-mine btn-sm-mine btn-primary" data-extra-cam-btn="${idx}">
+                        📷 Cámara Seg. (${extra.fotos_locales.length}/5)
+                      </button>
+                      <button type="button" class="btn-mine btn-sm-mine btn-secondary" data-extra-att-btn="${idx}">
+                        📎 Adjuntar Foto Seg.
+                      </button>
+                      <button type="button" class="btn-mine btn-sm-mine" data-extra-sim-btn="${idx}">
+                        🧪 Foto Placa Seg.
+                      </button>
+                    </div>
+
+                    ${
+                      extra.fotos_locales.length > 0
+                        ? `
+                      <div class="thumbs-list">
+                        ${extra.fotos_locales
+                          .map((f, fIdx) => {
+                            const fUrl = this.createObjectUrl(f.blob);
+                            return `
+                            <div class="thumb-card">
+                              <div class="thumb-img-wrap">
+                                <img src="${fUrl}" alt="Seg foto ${fIdx + 1}" />
+                              </div>
+                              <div class="thumb-meta">
+                                <strong>Foto Seg. #${fIdx + 1}</strong>
+                                <span>${formatBytes(f.peso_bytes)}</span>
+                              </div>
+                            </div>
+                          `;
+                          })
+                          .join('')}
+                      </div>
+                    `
+                        : ''
+                    }
+                  </div>
+                `;
+                })
+                .join('')}
+            </div>
+          `
+              : ''
+          }
+
+          <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:0.85rem; margin-top: 1.15rem; padding-top: 1rem; border-top: 2px solid var(--border-strong);">
+            <button type="button" class="btn-mine btn-secondary" id="btn-add-extra-obs">
+              + Agregar otra observación
+            </button>
+
+            <button type="button" class="btn-mine btn-primary" id="btn-guardar-reporte" style="min-width: 260px; font-size: 1.05rem;">
+              💾 Guardar Reporte en Dispositivo
+            </button>
+          </div>
+        </section>
+
+        <!-- 3. TABLA PRINCIPAL CON ORDEN DE LECTURA OPERATIVO -->
+        <section class="section-panel" aria-label="Tabla Principal con Orden de Lectura Operativo">
+          <div class="section-header">
+            <div>
+              <h2 class="section-title">
+                📊 3. Tabla Principal con Orden de Lectura Operativo (${
+                  this.filtroEquipo === 'TODOS'
+                    ? `Todos los equipos: ${reportesFiltrados.length}`
+                    : `Filtrado por equipo ${this.escapeHtml(this.filtroEquipo)}: ${reportesFiltrados.length}`
+                })
+              </h2>
+              <p class="brand-subtitle">
+                Orden operativo: <strong>1. Equipo → 2. Fecha (Inicial / Seg.) → 3. Vista Previa (Inicial / Seg.) → 4. Multimedia y Acciones (Inicial / Seg.) → 5. Tipo / Prioridad → 6. Observación Principal y Comentarios Posteriores → 7. Estado</strong>.
+              </p>
+            </div>
+            ${
+              this.filtroEquipo !== 'TODOS'
+                ? `
+              <button type="button" class="btn-mine btn-sm-mine btn-secondary" id="btn-clear-filter">
+                Mostrar Todos los Equipos
+              </button>
+            `
+                : ''
+            }
+          </div>
+
+          <div class="table-responsive">
+            <table class="operational-table">
+              <thead>
+                <tr>
+                  <th style="width: 11%;">1. Equipo</th>
+                  <th style="width: 12%;">2. Fecha (Inicial / Seg.)</th>
+                  <th style="width: 15%;">3. Vista Previa (Inicial / Seg.)</th>
+                  <th style="width: 19%;">4. Multimedia y Acciones (Inicial / Seg.)</th>
+                  <th style="width: 10%;">5. Tipo / Prioridad</th>
+                  <th style="width: 23%;">6. Observación Principal y Comentarios Posteriores</th>
+                  <th style="width: 10%;">7. Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${
+                  reportesFiltrados.length === 0
+                    ? `
+                  <tr>
+                    <td colspan="7" style="text-align:center; padding: 2rem; color: var(--text-muted);">
+                      No hay reportes registrados para el filtro seleccionado. Usa el panel superior para registrar uno nuevo.
+                    </td>
+                  </tr>
+                `
+                    : reportesFiltrados.map((rep) => this.renderTableRow(rep)).join('')
+                }
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      ${this.renderViewerModal()}
+      ${this.renderFollowupModal()}
+    `;
+
+    this.attachEvents();
+  }
+
+  renderTableRow(rep) {
+    const seguimientos = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
+    const prioClass =
+      rep.prioridad === 'Alta'
+        ? 'badge-alta'
+        : rep.prioridad === 'Media'
+        ? 'badge-media'
+        : 'badge-baja';
+
+    return `
+      <tr>
+        <!-- COL 1: EQUIPO -->
+        <td>
+          <div style="display:flex; flex-direction:column; gap:0.45rem;">
+            <button
+              type="button"
+              class="btn-mine btn-sm-mine btn-primary"
+              data-filter-code="${this.escapeHtml(rep.codigo_equipo)}"
+              title="Filtrar por este equipo"
+            >
+              🚜 ${this.escapeHtml(rep.codigo_equipo)}
+            </button>
+            <span style="font-size:0.75rem; color:var(--text-muted);">
+              ID: ${this.escapeHtml(rep.id.slice(0, 8))}
+            </span>
+            ${
+              rep.es_nuevo_codigo
+                ? `<span class="badge badge-baja">Código nuevo</span>`
+                : ''
+            }
+          </div>
+        </td>
+
+        <!-- COL 2: FECHA (INICIAL / SEG.) -->
+        <td>
+          <div class="aligned-stack">
+            <div class="slot-initial">
+              <div>
+                <div style="font-size:0.76rem; color:var(--text-muted); font-weight:700;">📌 Fecha Inicial</div>
+                <div style="font-size:1rem; font-weight:800; margin-top:0.2rem;">${this.escapeHtml(rep.fecha)}</div>
+              </div>
+              <div style="font-size:0.74rem; color:var(--accent-blue);">Zona: America/Lima</div>
+            </div>
+
+            ${seguimientos
+              .map(
+                (seg, sIdx) => `
+              <div class="slot-followup">
+                <div>
+                  <div style="font-size:0.76rem; color:var(--accent-amber); font-weight:800;">↳ Seguimiento #${sIdx + 1}</div>
+                  <div style="font-size:0.98rem; font-weight:800; margin-top:0.2rem;">${this.escapeHtml(seg.fecha)}</div>
+                </div>
+                <div style="font-size:0.74rem; color:var(--text-muted);">Fecha Seg.</div>
+              </div>
+            `
+              )
+              .join('')}
+          </div>
+        </td>
+
+        <!-- COL 3: VISTA PREVIA (INICIAL / SEG.) -->
+        <td>
+          <div class="aligned-stack">
+            <div class="slot-initial">
+              <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700; margin-bottom:0.25rem;">
+                📌 Inicial (${(rep.fotos_locales || []).length} foto(s)${rep.video_local ? ' + 1 video' : ''})
+              </div>
+              <div class="preview-strip">
+                ${(rep.fotos_locales || [])
+                  .map((f, fIdx) => {
+                    const url = this.createObjectUrl(f.blob);
+                    return `
+                    <img
+                      src="${url}"
+                      alt="Miniatura inicial ${fIdx + 1}"
+                      class="table-thumb"
+                      data-open-viewer="${this.escapeHtml(rep.id)}"
+                      data-viewer-seg="null"
+                      data-viewer-idx="${fIdx}"
+                      title="Toca para inspeccionar placa / detalle (${f.ancho}x${f.alto}px)"
+                    />
+                  `;
+                  })
+                  .join('')}
+                ${
+                  rep.video_local
+                    ? `
+                  <button
+                    type="button"
+                    class="btn-mine btn-sm-mine"
+                    data-open-video="${this.escapeHtml(rep.id)}"
+                    data-viewer-seg="null"
+                  >
+                    🎥 Ver Video
+                  </button>
+                `
+                    : ''
+                }
+              </div>
+            </div>
+
+            ${seguimientos
+              .map((seg, sIdx) => {
+                const segFotos = seg.fotos_locales || [];
+                return `
+                <div class="slot-followup">
+                  <div style="font-size:0.75rem; color:var(--accent-amber); font-weight:700; margin-bottom:0.25rem;">
+                    ↳ Vista Seg. #${sIdx + 1} (${segFotos.length} foto(s)${seg.video_local ? ' + 1 video' : ''})
+                  </div>
+                  <div class="preview-strip">
+                    ${
+                      segFotos.length === 0 && !seg.video_local
+                        ? `<span style="font-size:0.78rem; color:var(--text-muted);">Sin foto adjunta</span>`
+                        : segFotos
+                            .map((f, fIdx) => {
+                              const url = this.createObjectUrl(f.blob);
+                              return `
+                              <img
+                                src="${url}"
+                                alt="Miniatura seg ${fIdx + 1}"
+                                class="table-thumb"
+                                data-open-viewer="${this.escapeHtml(rep.id)}"
+                                data-viewer-seg="${sIdx}"
+                                data-viewer-idx="${fIdx}"
+                              />
+                            `;
+                            })
+                            .join('')
+                    }
+                  </div>
+                </div>
+              `;
+              })
+              .join('')}
+          </div>
+        </td>
+
+        <!-- COL 4: MULTIMEDIA Y ACCIONES (INICIAL / SEG.) -->
+        <td>
+          <div class="aligned-stack">
+            <!-- Acciones Multimedia Inicial -->
+            <div class="slot-initial">
+              <div style="font-size:0.76rem; font-weight:700; color:var(--text-muted);">
+                📌 Archivos Iniciales (${
+                  (rep.fotos_locales || [])[0]
+                    ? formatBytes(
+                        (rep.fotos_locales || []).reduce((acc, f) => acc + (f.peso_bytes || 0), 0)
+                      )
+                    : '0 KB'
+                })
+              </div>
+              <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.35rem;">
+                <input
+                  type="file"
+                  id="replace-init-${this.escapeHtml(rep.id)}"
+                  accept="image/*"
+                  style="display:none"
+                />
+                <button
+                  type="button"
+                  class="btn-mine btn-sm-mine btn-secondary"
+                  data-trigger-replace-init="${this.escapeHtml(rep.id)}"
+                  title="Cambiar foto inicial"
+                >
+                  🔄 Cambiar
+                </button>
+                <button
+                  type="button"
+                  class="btn-mine btn-sm-mine"
+                  data-download-init="${this.escapeHtml(rep.id)}"
+                  title="Descargar foto/video inicial"
+                >
+                  ⬇️ Descargar
+                </button>
+              </div>
+            </div>
+
+            <!-- Acciones Multimedia de cada Seguimiento (↳) -->
+            ${seguimientos
+              .map((seg, sIdx) => {
+                const pesoSeg = (seg.fotos_locales || []).reduce(
+                  (acc, f) => acc + (f.peso_bytes || 0),
+                  0
+                );
+                return `
+                <div class="slot-followup">
+                  <div style="font-size:0.76rem; font-weight:700; color:var(--accent-amber);">
+                    ↳ Archivos Seg. #${sIdx + 1} (${formatBytes(pesoSeg)})
+                  </div>
+                  <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.35rem;">
+                    <input
+                      type="file"
+                      id="replace-seg-${this.escapeHtml(rep.id)}-${sIdx}"
+                      accept="image/*"
+                      style="display:none"
+                    />
+                    <button
+                      type="button"
+                      class="btn-mine btn-sm-mine btn-secondary"
+                      data-trigger-replace-seg="${this.escapeHtml(rep.id)}"
+                      data-seg-idx="${sIdx}"
+                    >
+                      🔄 Cambiar
+                    </button>
+                    <button
+                      type="button"
+                      class="btn-mine btn-sm-mine"
+                      data-download-seg="${this.escapeHtml(rep.id)}"
+                      data-seg-idx="${sIdx}"
+                      ${(seg.fotos_locales || []).length === 0 ? 'disabled' : ''}
+                    >
+                      ⬇️ Descargar
+                    </button>
+                  </div>
+                </div>
+              `;
+              })
+              .join('')}
+          </div>
+        </td>
+
+        <!-- COL 5: TIPO / PRIORIDAD -->
+        <td>
+          <div style="display:flex; flex-direction:column; gap:0.45rem;">
+            <span class="badge ${prioClass}">
+              ${rep.prioridad === 'Alta' ? '🔴' : rep.prioridad === 'Media' ? '🟡' : '🔵'} Prioridad ${this.escapeHtml(rep.prioridad)}
+            </span>
+            <span class="badge" style="border:1px solid var(--border-strong);">
+              ${rep.tipo === 'Observación' ? '🔍' : '📄'} ${this.escapeHtml(rep.tipo)}
+            </span>
+            <span style="font-size:0.75rem; color:var(--text-muted);">
+              Calidad: ${rep.calidad_compresion === 'alta' ? 'Alta Nitidez (2048px)' : 'Estándar (1600px)'}
+            </span>
+          </div>
+        </td>
+
+        <!-- COL 6: OBSERVACIÓN PRINCIPAL Y COMENTARIOS POSTERIORES -->
+        <td>
+          <div class="aligned-stack">
+            <div class="slot-initial">
+              <div>
+                <div style="font-size:0.76rem; font-weight:800; color:var(--accent-blue); margin-bottom:0.2rem;">
+                  📌 Observación Principal
+                </div>
+                <div style="font-size:0.92rem;">${this.escapeHtml(rep.observacion)}</div>
+              </div>
+              <div style="margin-top:0.45rem;">
+                <button
+                  type="button"
+                  class="btn-mine btn-sm-mine"
+                  data-open-followup-modal="${this.escapeHtml(rep.id)}"
+                >
+                  + Agregar Seguimiento (↳)
+                </button>
+              </div>
+            </div>
+
+            ${seguimientos
+              .map(
+                (seg, sIdx) => `
+              <div class="slot-followup">
+                <div>
+                  <span class="badge badge-media" style="margin-bottom:0.3rem;">
+                    ↳ ⚠️ ${this.escapeHtml(seg.estado_seguimiento || 'Sigue observación')}
+                  </span>
+                  <div style="font-size:0.9rem; margin-top:0.2rem;">
+                    ${this.escapeHtml(seg.comentario)}
+                  </div>
+                </div>
+                <div style="font-size:0.73rem; color:var(--text-muted);">
+                  Comentario posterior #${sIdx + 1}
+                </div>
+              </div>
+            `
+              )
+              .join('')}
+          </div>
+        </td>
+
+        <!-- COL 7: ESTADO -->
+        <td>
+          <div style="display:flex; flex-direction:column; gap:0.5rem;">
+            <span class="badge badge-pending">
+              ⏳ ${this.escapeHtml(rep.estado.toUpperCase())}
+            </span>
+            <span style="font-size:0.75rem; color:var(--text-muted);">
+              Guardado en IndexedDB local
+            </span>
+          </div>
+        </td>
+      </tr>
+    `;
+  }
+
+  renderViewerModal() {
+    if (!this.viewerModal) return '';
+    const { title, blob, isVideo, meta } = this.viewerModal;
+    const url = this.createObjectUrl(blob);
+    return `
+      <div class="modal-backdrop" id="modal-viewer-backdrop">
+        <div class="modal-card">
+          <div class="section-header">
+            <h3 class="section-title">🔍 ${this.escapeHtml(title)}</h3>
+            <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-close-viewer">
+              ✕ Cerrar
+            </button>
+          </div>
+          <div style="background:#0f172a; border-radius:10px; padding:0.5rem; overflow:hidden; text-align:center; max-height:72vh; display:flex; align-items:center; justify-content:center;">
+            ${
+              isVideo
+                ? `<video src="${url}" controls autoplay style="max-width:100%; max-height:68vh; border-radius:6px;"></video>`
+                : `<img src="${url}" alt="Inspección de placa" style="max-width:100%; max-height:68vh; object-fit:contain; border-radius:6px;" />`
+            }
+          </div>
+          <div style="margin-top:0.75rem; font-size:0.88rem; color:var(--text-muted); display:flex; justify-content:space-between; flex-wrap:wrap; gap:0.5rem; font-weight:700;">
+            <span>${this.escapeHtml(meta || '')}</span>
+            <span>Verificación de legibilidad de placa / serie (Escenario P3)</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  renderFollowupModal() {
+    if (!this.followupModal) return '';
+    const m = this.followupModal;
+    return `
+      <div class="modal-backdrop" id="modal-followup-backdrop">
+        <div class="modal-card">
+          <div class="section-header">
+            <h3 class="section-title">↳ Nuevo Seguimiento para Equipo ${this.escapeHtml(m.codigo_equipo)}</h3>
+            <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-close-followup">
+              ✕ Cancelar
+            </button>
+          </div>
+
+          <div class="form-grid">
+            <div class="field-group">
+              <label class="field-label">Fecha del Seguimiento (America/Lima)</label>
+              <input type="date" id="modal-seg-fecha" class="input-mine" value="${this.escapeHtml(m.fecha)}" />
+            </div>
+
+            <div class="field-group">
+              <label class="field-label">Estado de la Observación</label>
+              <select id="modal-seg-estado" class="select-mine">
+                <option value="Sigue observación" ${m.estado_seguimiento === 'Sigue observación' ? 'selected' : ''}>
+                  ⚠️ Sigue observación
+                </option>
+                <option value="En monitoreo" ${m.estado_seguimiento === 'En monitoreo' ? 'selected' : ''}>
+                  🛠️ En monitoreo
+                </option>
+                <option value="Levantada" ${m.estado_seguimiento === 'Levantada' ? 'selected' : ''}>
+                  ✅ Observación levantada
+                </option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field-group" style="margin-top:0.85rem;">
+            <label class="field-label">Comentario Posterior *</label>
+            <textarea id="modal-seg-comentario" class="textarea-mine" placeholder="Describe la evolución de la observación o el trabajo realizado...">${this.escapeHtml(m.comentario)}</textarea>
+          </div>
+
+          <div class="media-capture-box">
+            <div class="field-label" style="margin-bottom:0.5rem;">
+              <span>Evidencia del Seguimiento (${m.fotos_locales.length}/5 fotos)</span>
+            </div>
+            <input type="file" id="modal-seg-file" accept="image/*" multiple style="display:none" />
+            <div class="media-buttons-row">
+              <button type="button" class="btn-mine btn-sm-mine btn-primary" id="btn-modal-seg-photo">
+                📷 / 📎 Adjuntar Foto de Seguimiento
+              </button>
+              <button type="button" class="btn-mine btn-sm-mine" id="btn-modal-seg-sim">
+                🧪 Generar Foto Placa de Seguimiento
+              </button>
+            </div>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-top:1rem;">
+            <button type="button" class="btn-mine btn-primary" id="btn-save-followup">
+              💾 Guardar Seguimiento (↳)
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  attachEvents() {
+    // Cerrar banner
+    const btnCloseBanner = this.rootEl.querySelector('#btn-close-banner');
+    if (btnCloseBanner) {
+      btnCloseBanner.addEventListener('click', () => {
+        this.banner = null;
+        this.render();
+      });
+    }
+
+    // Filtro por código de equipo en el Cuadro Superior o en la Tabla
+    this.rootEl.querySelectorAll('[data-filter-code]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const code = btn.getAttribute('data-filter-code');
+        this.filtroEquipo = code;
+        if (code !== 'TODOS') {
+          this.form.codigo_equipo = code;
+        }
+        this.render();
+      });
+    });
+
+    const btnClearFilter = this.rootEl.querySelector('#btn-clear-filter');
+    if (btnClearFilter) {
+      btnClearFilter.addEventListener('click', () => {
+        this.filtroEquipo = 'TODOS';
+        this.render();
+      });
+    }
+
+    // Botón para probar Escenario P1 (Guardia nocturna 23:30 h en Lima = 04:30 UTC del día siguiente)
+    const btnTestNightP1 = this.rootEl.querySelector('#btn-test-night-p1');
+    if (btnTestNightP1) {
+      btnTestNightP1.addEventListener('click', () => {
+        // 2026-11-18T04:30:00Z equivale exactamente a 2026-11-17 23:30:00 en Lima (UTC-5)
+        const simulatedNightDate = new Date('2026-11-18T04:30:00.000Z');
+        const wrongUtcDate = simulatedNightDate.toISOString().slice(0, 10);
+        const correctPeruDate = getFechaHoyPeru(simulatedNightDate);
+        this.form.fecha = correctPeruDate;
+        this.setBanner(
+          'success',
+          `Prueba P1 (Guardia Nocturna 23:30 h Lima): En UTC ya sería "${wrongUtcDate}", pero datePeru.js mantuvo la fecha real de Perú "${correctPeruDate}".`
+        );
+      });
+    }
+
+    // Cambios en los campos del formulario principal
+    const selectEquipo = this.rootEl.querySelector('#select-codigo-equipo');
+    if (selectEquipo) {
+      selectEquipo.addEventListener('change', (e) => {
+        this.form.codigo_equipo = e.target.value;
+        this.render();
+      });
+    }
+
+    const inputNuevoCodigo = this.rootEl.querySelector('#input-nuevo-codigo');
+    if (inputNuevoCodigo) {
+      inputNuevoCodigo.addEventListener('input', (e) => {
+        this.form.nuevo_codigo_input = e.target.value;
+        const previewEl = this.rootEl.querySelector('.norm-preview');
+        const norm = normalizeEquipmentCode(this.form.nuevo_codigo_input);
+        if (previewEl) {
+          previewEl.innerHTML = norm
+            ? `Se normalizará como: <strong>${this.escapeHtml(norm)}</strong>`
+            : 'Escribe minúsculas o espacios (ej. "793f 05" → "793F-05") y toca "+ Crear".';
+        }
+      });
+      inputNuevoCodigo.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          this.handleCreateEquipmentCode();
+        }
+      });
+    }
+
+    const btnCrearCodigo = this.rootEl.querySelector('#btn-crear-codigo');
+    if (btnCrearCodigo) {
+      btnCrearCodigo.addEventListener('click', () => this.handleCreateEquipmentCode());
+    }
+
+    const inputFecha = this.rootEl.querySelector('#input-fecha-peru');
+    if (inputFecha) {
+      inputFecha.addEventListener('change', (e) => {
+        this.form.fecha = e.target.value;
+      });
+    }
+
+    const selectTipo = this.rootEl.querySelector('#select-tipo');
+    if (selectTipo) {
+      selectTipo.addEventListener('change', (e) => {
+        this.form.tipo = e.target.value;
+      });
+    }
+
+    const selectPrioridad = this.rootEl.querySelector('#select-prioridad');
+    if (selectPrioridad) {
+      selectPrioridad.addEventListener('change', (e) => {
+        this.form.prioridad = e.target.value;
+      });
+    }
+
+    const selectCalidad = this.rootEl.querySelector('#select-calidad');
+    if (selectCalidad) {
+      selectCalidad.addEventListener('change', (e) => {
+        this.form.calidad_compresion = e.target.value;
+      });
+    }
+
+    const textareaObs = this.rootEl.querySelector('#textarea-observacion');
+    if (textareaObs) {
+      textareaObs.addEventListener('input', (e) => {
+        this.form.observacion = e.target.value;
+      });
+    }
+
+    // Botones Multimedia Principal (Cámara, Adjuntar, Video, Simulador de placa)
+    const fileCamMain = this.rootEl.querySelector('#file-camera-main');
+    const fileAttMain = this.rootEl.querySelector('#file-attach-main');
+    const fileVidMain = this.rootEl.querySelector('#file-video-main');
+
+    this.rootEl.querySelector('#btn-camera-main')?.addEventListener('click', () => fileCamMain?.click());
+    this.rootEl.querySelector('#btn-attach-main')?.addEventListener('click', () => fileAttMain?.click());
+    this.rootEl.querySelector('#btn-video-main')?.addEventListener('click', () => fileVidMain?.click());
+
+    fileCamMain?.addEventListener('change', (e) => this.handleAddPhotos(e.target.files, null));
+    fileAttMain?.addEventListener('change', (e) => this.handleAddPhotos(e.target.files, null));
+    fileVidMain?.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files[0]) {
+        this.handleAttachVideo(e.target.files[0], null);
+      }
+    });
+
+    this.rootEl.querySelector('#btn-sim-photo-main')?.addEventListener('click', async () => {
+      const sampleFile = await this.generateSamplePhotoFile(
+        this.form.codigo_equipo,
+        this.form.calidad_compresion
+      );
+      await this.handleAddPhotos([sampleFile], null);
+    });
+
+    // Quitar o ver foto del formulario principal
+    this.rootEl.querySelectorAll('[data-remove-main-photo]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.getAttribute('data-remove-main-photo'));
+        this.form.fotos_locales.splice(idx, 1);
+        this.form.fotos_locales.forEach((f, i) => {
+          f.indice = i + 1;
+        });
+        this.render();
+      });
+    });
+
+    this.rootEl.querySelectorAll('[data-preview-main-photo]').forEach((wrap) => {
+      wrap.addEventListener('click', () => {
+        const idx = Number(wrap.getAttribute('data-preview-main-photo'));
+        const foto = this.form.fotos_locales[idx];
+        if (!foto) return;
+        this.viewerModal = {
+          title: `Vista Previa Foto #${idx + 1} — ${this.form.codigo_equipo}`,
+          blob: foto.blob,
+          isVideo: false,
+          meta: `Resolución: ${foto.ancho}×${foto.alto} px | Peso comprimido: ${formatBytes(foto.peso_bytes)} (Original: ${formatBytes(foto.peso_original_bytes)})`
+        };
+        this.render();
+      });
+    });
+
+    this.rootEl.querySelector('#btn-remove-main-video')?.addEventListener('click', () => {
+      this.form.video_local = null;
+      this.render();
+    });
+
+    // "+ Agregar otra observación"
+    this.rootEl
+      .querySelector('#btn-add-extra-obs')
+      ?.addEventListener('click', () => this.addExtraObservationSlot());
+
+    this.rootEl.querySelectorAll('[data-remove-extra]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.getAttribute('data-remove-extra'));
+        this.removeExtraObservationSlot(idx);
+      });
+    });
+
+    this.rootEl.querySelectorAll('[data-extra-modo]').forEach((sel) => {
+      sel.addEventListener('change', (e) => {
+        const idx = Number(sel.getAttribute('data-extra-modo'));
+        this.form.observaciones_adicionales[idx].modo = e.target.value;
+      });
+    });
+
+    this.rootEl.querySelectorAll('[data-extra-fecha]').forEach((inp) => {
+      inp.addEventListener('change', (e) => {
+        const idx = Number(inp.getAttribute('data-extra-fecha'));
+        this.form.observaciones_adicionales[idx].fecha = e.target.value;
+      });
+    });
+
+    this.rootEl.querySelectorAll('[data-extra-estado]').forEach((sel) => {
+      sel.addEventListener('change', (e) => {
+        const idx = Number(sel.getAttribute('data-extra-estado'));
+        this.form.observaciones_adicionales[idx].estado_seguimiento = e.target.value;
+      });
+    });
+
+    this.rootEl.querySelectorAll('[data-extra-comentario]').forEach((txt) => {
+      txt.addEventListener('input', (e) => {
+        const idx = Number(txt.getAttribute('data-extra-comentario'));
+        this.form.observaciones_adicionales[idx].comentario = e.target.value;
+      });
+    });
+
+    this.rootEl.querySelectorAll('[data-extra-cam-btn]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.getAttribute('data-extra-cam-btn'));
+        const inp = this.rootEl.querySelector(`#file-extra-cam-${idx}`);
+        inp?.click();
+        inp?.addEventListener(
+          'change',
+          (e) => this.handleAddPhotos(e.target.files, idx),
+          { once: true }
+        );
+      });
+    });
+
+    this.rootEl.querySelectorAll('[data-extra-att-btn]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.getAttribute('data-extra-att-btn'));
+        const inp = this.rootEl.querySelector(`#file-extra-att-${idx}`);
+        inp?.click();
+        inp?.addEventListener(
+          'change',
+          (e) => this.handleAddPhotos(e.target.files, idx),
+          { once: true }
+        );
+      });
+    });
+
+    this.rootEl.querySelectorAll('[data-extra-sim-btn]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const idx = Number(btn.getAttribute('data-extra-sim-btn'));
+        const sampleFile = await this.generateSamplePhotoFile(
+          this.form.codigo_equipo,
+          this.form.calidad_compresion
+        );
+        await this.handleAddPhotos([sampleFile], idx);
+      });
+    });
+
+    // Guardar Reporte
+    this.rootEl
+      .querySelector('#btn-guardar-reporte')
+      ?.addEventListener('click', () => this.handleSaveReport());
+
+    // Eventos en la Tabla Principal: Visor de fotos/videos, Cambiar (🔄), Descargar (⬇️) y Seguimiento (↳)
+    this.rootEl.querySelectorAll('[data-open-viewer]').forEach((img) => {
+      img.addEventListener('click', () => {
+        const repId = img.getAttribute('data-open-viewer');
+        const segAttr = img.getAttribute('data-viewer-seg');
+        const fIdx = Number(img.getAttribute('data-viewer-idx') || 0);
+        const rep = this.reportes.find((r) => r.id === repId);
+        if (!rep) return;
+
+        const target =
+          segAttr === 'null' ? rep : (rep.seguimientos || [])[Number(segAttr)];
+        const foto = (target?.fotos_locales || [])[fIdx];
+        if (!foto) return;
+
+        this.viewerModal = {
+          title: `Equipo ${rep.codigo_equipo} — ${
+            segAttr === 'null' ? 'Evidencia Inicial' : `Seguimiento #${Number(segAttr) + 1}`
+          }`,
+          blob: foto.blob,
+          isVideo: false,
+          meta: `Fecha: ${target.fecha || rep.fecha} | Dimensiones: ${foto.ancho}×${foto.alto} px | Peso: ${formatBytes(foto.peso_bytes)}`
+        };
+        this.render();
+      });
+    });
+
+    this.rootEl.querySelectorAll('[data-open-video]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const repId = btn.getAttribute('data-open-video');
+        const rep = this.reportes.find((r) => r.id === repId);
+        if (!rep || !rep.video_local) return;
+        this.viewerModal = {
+          title: `Video Equipo ${rep.codigo_equipo}`,
+          blob: rep.video_local.blob,
+          isVideo: true,
+          meta: `Peso: ${formatBytes(rep.video_local.peso_bytes)}`
+        };
+        this.render();
+      });
+    });
+
+    // Botones 🔄 Cambiar foto inicial
+    this.rootEl.querySelectorAll('[data-trigger-replace-init]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const repId = btn.getAttribute('data-trigger-replace-init');
+        const input = this.rootEl.querySelector(`#replace-init-${repId}`);
+        if (!input) return;
+        input.onchange = (e) => {
+          if (e.target.files && e.target.files[0]) {
+            this.handleReplaceMediaInTable(repId, null, 'photo', 0, e.target.files[0]);
+          }
+        };
+        input.click();
+      });
+    });
+
+    // Botones ⬇️ Descargar foto inicial
+    this.rootEl.querySelectorAll('[data-download-init]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const repId = btn.getAttribute('data-download-init');
+        const rep = this.reportes.find((r) => r.id === repId);
+        const foto = (rep?.fotos_locales || [])[0];
+        if (foto && foto.blob) {
+          this.handleDownloadMedia(foto.blob, `${rep.codigo_equipo}_${rep.fecha}_inicial.jpg`);
+        }
+      });
+    });
+
+    // Botones 🔄 Cambiar foto seguimiento
+    this.rootEl.querySelectorAll('[data-trigger-replace-seg]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const repId = btn.getAttribute('data-trigger-replace-seg');
+        const sIdx = Number(btn.getAttribute('data-seg-idx'));
+        const input = this.rootEl.querySelector(`#replace-seg-${repId}-${sIdx}`);
+        if (!input) return;
+        input.onchange = (e) => {
+          if (e.target.files && e.target.files[0]) {
+            this.handleReplaceMediaInTable(repId, sIdx, 'photo', 0, e.target.files[0]);
+          }
+        };
+        input.click();
+      });
+    });
+
+    // Botones ⬇️ Descargar foto seguimiento
+    this.rootEl.querySelectorAll('[data-download-seg]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const repId = btn.getAttribute('data-download-seg');
+        const sIdx = Number(btn.getAttribute('data-seg-idx'));
+        const rep = this.reportes.find((r) => r.id === repId);
+        const seg = (rep?.seguimientos || [])[sIdx];
+        const foto = (seg?.fotos_locales || [])[0];
+        if (foto && foto.blob) {
+          this.handleDownloadMedia(
+            foto.blob,
+            `${rep.codigo_equipo}_${seg.fecha}_seguimiento_${sIdx + 1}.jpg`
+          );
+        }
+      });
+    });
+
+    // Abrir modal "+ Agregar Seguimiento (↳)"
+    this.rootEl.querySelectorAll('[data-open-followup-modal]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const repId = btn.getAttribute('data-open-followup-modal');
+        const rep = this.reportes.find((r) => r.id === repId);
+        if (!rep) return;
+        this.followupModal = {
+          reporteId: rep.id,
+          codigo_equipo: rep.codigo_equipo,
+          fecha: getFechaHoyPeru(),
+          estado_seguimiento: 'Sigue observación',
+          comentario: '',
+          fotos_locales: [],
+          video_local: null
+        };
+        this.render();
+      });
+    });
+
+    // Eventos de modales
+    this.rootEl.querySelector('#btn-close-viewer')?.addEventListener('click', () => {
+      this.viewerModal = null;
+      this.render();
+    });
+
+    this.rootEl.querySelector('#modal-viewer-backdrop')?.addEventListener('click', (e) => {
+      if (e.target.id === 'modal-viewer-backdrop') {
+        this.viewerModal = null;
+        this.render();
+      }
+    });
+
+    this.rootEl.querySelector('#btn-close-followup')?.addEventListener('click', () => {
+      this.followupModal = null;
+      this.render();
+    });
+
+    this.rootEl.querySelector('#modal-seg-fecha')?.addEventListener('change', (e) => {
+      if (this.followupModal) this.followupModal.fecha = e.target.value;
+    });
+    this.rootEl.querySelector('#modal-seg-estado')?.addEventListener('change', (e) => {
+      if (this.followupModal) this.followupModal.estado_seguimiento = e.target.value;
+    });
+    this.rootEl.querySelector('#modal-seg-comentario')?.addEventListener('input', (e) => {
+      if (this.followupModal) this.followupModal.comentario = e.target.value;
+    });
+
+    const modalSegFile = this.rootEl.querySelector('#modal-seg-file');
+    this.rootEl.querySelector('#btn-modal-seg-photo')?.addEventListener('click', () => {
+      modalSegFile?.click();
+    });
+    modalSegFile?.addEventListener('change', async (e) => {
+      if (!this.followupModal || !e.target.files) return;
+      for (const f of Array.from(e.target.files)) {
+        if (this.followupModal.fotos_locales.length >= 5) break;
+        const c = await compressPhotoFile(f, 'estandar');
+        this.followupModal.fotos_locales.push({
+          indice: this.followupModal.fotos_locales.length + 1,
+          ...c
+        });
+      }
+      this.render();
+    });
+
+    this.rootEl.querySelector('#btn-modal-seg-sim')?.addEventListener('click', async () => {
+      if (!this.followupModal) return;
+      const sample = await this.generateSamplePhotoFile(this.followupModal.codigo_equipo, 'estandar');
+      const c = await compressPhotoFile(sample, 'estandar');
+      this.followupModal.fotos_locales.push({
+        indice: this.followupModal.fotos_locales.length + 1,
+        ...c
+      });
+      this.render();
+    });
+
+    this.rootEl.querySelector('#btn-save-followup')?.addEventListener('click', () => {
+      this.handleSaveFollowupModal();
+    });
+  }
+
+  escapeHtml(str = '') {
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+}
