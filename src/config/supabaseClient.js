@@ -424,7 +424,8 @@ class SupabaseResilientClient {
             const isKnownDemoEmail = [
               'supervisor.mina@operacion.pe',
               'tecnico.guardia@operacion.pe',
-              'jefe.equipos@operacion.pe'
+              'jefe.equipos@operacion.pe',
+              'admin.arquitectura@operacion.pe'
             ].includes(cleanEmail);
 
             if (!isKnownDemoEmail) {
@@ -447,8 +448,13 @@ class SupabaseResilientClient {
 
       // Modo Operativo Resiliente / Supabase Auth para pruebas en campo y validación M4/M5
       let roleTitle = 'Supervisor de Mantenimiento Mina';
-      if (cleanEmail.includes('tecnico')) roleTitle = 'Técnico Mecánico de Guardia';
-      else if (cleanEmail.includes('jefe')) roleTitle = 'Jefe de Guardia Tajo Abierto';
+      if (cleanEmail.includes('admin.arquitectura') || cleanEmail.includes('arquitectura')) {
+        roleTitle = 'Administrador de Arquitectura (Vista Completa M1 a M6)';
+      } else if (cleanEmail.includes('tecnico')) {
+        roleTitle = 'Técnico Mecánico de Guardia';
+      } else if (cleanEmail.includes('jefe')) {
+        roleTitle = 'Jefe de Guardia Tajo Abierto';
+      }
 
       const session = buildSessionPayload({
         email: cleanEmail,

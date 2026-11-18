@@ -20,20 +20,30 @@ export const DEMO_MINE_ACCOUNTS = [
   {
     email: 'supervisor.mina@operacion.pe',
     password: 'Mina2026!Sup',
-    nombre: 'SUPERVISOR MINA',
-    puesto: 'Supervisor de Mantenimiento Tajo'
+    nombre: 'SUPERVISOR MINA (OPERATIVO)',
+    puesto: 'Supervisor de Mantenimiento Tajo — Vista Limpia (2 Pestañas)',
+    isArchitectureAdmin: false
   },
   {
     email: 'tecnico.guardia@operacion.pe',
     password: 'Mina2026!Tec',
-    nombre: 'TECNICO GUARDIA',
-    puesto: 'Técnico Mecánico Guardia Nocturna'
+    nombre: 'TECNICO GUARDIA (OPERATIVO)',
+    puesto: 'Técnico Mecánico Guardia Nocturna — Vista Limpia (2 Pestañas)',
+    isArchitectureAdmin: false
   },
   {
     email: 'jefe.equipos@operacion.pe',
     password: 'Mina2026!Jefe',
-    nombre: 'JEFE EQUIPOS',
-    puesto: 'Jefe de Confiabilidad y Flota Pesada'
+    nombre: 'JEFE EQUIPOS (OPERATIVO)',
+    puesto: 'Jefe de Confiabilidad y Flota Pesada — Vista Limpia (2 Pestañas)',
+    isArchitectureAdmin: false
+  },
+  {
+    email: 'admin.arquitectura@operacion.pe',
+    password: 'Mina2026!Admin',
+    nombre: 'ADMIN ARQUITECTURA (M1 a M6)',
+    puesto: 'Usuario Especial: Ver los 6 Módulos Completos y Laboratorios P1–P10',
+    isArchitectureAdmin: true
   }
 ];
 
@@ -133,12 +143,17 @@ class AuthService {
       badgeText = '⚠️ Sesión Expirada (P9)';
     }
 
+    const emailLower = (this.session?.user?.email || '').toLowerCase();
+    const isArchitectureAdmin =
+      emailLower.includes('admin.arquitectura') || emailLower.includes('arquitectura');
+
     return {
       session: this.session,
       user: this.session?.user || null,
       hasSession,
       isExpired,
       isAuthenticatedValid,
+      isArchitectureAdmin,
       remainingSeconds,
       statusKey,
       statusLabel,

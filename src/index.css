@@ -1641,5 +1641,32 @@ body.theme-night .pwa-top-strip.is-online {
   color: #fbbf24;
 }
 
+/* ==========================================================================
+   MODO SUPERVISOR OPERATIVO (2 PESTAÑAS LIMPIAS) vs.
+   USUARIO ESPECIAL DE ARQUITECTURA (6 MÓDULOS COMPLETOS M1..M6)
+   ========================================================================== */
+
+body.view-mode-operativo .tech-only-tab,
+body.view-mode-operativo .tech-only-block,
+body.view-mode-operativo .tech-only-inline,
+body.view-mode-operativo #btn-sim-photo-main,
+body.view-mode-operativo #btn-modal-seg-sim,
+body.view-mode-operativo [data-extra-sim-btn] {
+  display: none !important;
+}
+
+body.view-mode-operativo .operativo-only-inline {
+  display: inline !important;
+}
+
+body.view-mode-ingenieria .operativo-only-inline {
+  display: none !important;
+}
+
+body.view-mode-operativo .module-navbar {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+
 
 

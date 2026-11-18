@@ -683,14 +683,17 @@ export class HistorialModuleView {
         <!-- ENCABEZADO DEL MÓDULO 6 Y MÉTRICAS DEL HISTORIAL UNIFICADO -->
         <section class="panel-card">
           <div class="panel-header">
-            <h2 class="panel-title">📊 Módulo 6 (M6): Historial Unificado (Local + Supabase), Catálogo Compartido y Exportación a Excel (.xlsx)</h2>
+            <h2 class="panel-title">
+              <span class="operativo-only-inline">📊 Historial de Reportes de Mina y Exportación a Excel (.xlsx)</span>
+              <span class="tech-only-inline">📊 Módulo 6 (M6): Historial Unificado (Local + Supabase), Catálogo Compartido y Exportación a Excel (.xlsx)</span>
+            </h2>
             <span class="panel-badge" style="background:#22c55e; color:#0f172a;">
-              ✅ ENTREGA 2 COMPLETA (M1..M6) • ${filteredReports.length} / ${totalUnified} REGISTROS
+              ✅ ${filteredReports.length} / ${totalUnified} REPORTES (${syncedInCloudCount} EN NUBE)
             </span>
           </div>
 
           <div class="panel-body">
-            <div class="m2-metrics-grid">
+            <div class="m2-metrics-grid tech-only-block" style="margin-bottom:0.9rem;">
               <!-- Tarjeta 1: Historial Unificado -->
               <div class="m2-metric-card">
                 <div class="m2-metric-header">
@@ -745,7 +748,7 @@ export class HistorialModuleView {
             </div>
 
             <!-- Barra rápida de acciones M6 -->
-            <div class="m5-actions-toolbar" style="margin-top:0.9rem;">
+            <div class="m5-actions-toolbar">
               <button
                 type="button"
                 class="btn-mine btn-success"
@@ -757,7 +760,7 @@ export class HistorialModuleView {
 
               <button
                 type="button"
-                class="btn-mine btn-amber"
+                class="btn-mine btn-amber tech-only-inline"
                 id="btn-m6-run-p10-lab"
                 ${this.isRunningP10 ? 'disabled' : ''}
               >
@@ -770,7 +773,7 @@ export class HistorialModuleView {
 
               <button
                 type="button"
-                class="btn-mine btn-primary"
+                class="btn-mine btn-primary tech-only-inline"
                 id="btn-m6-simulate-teammate"
                 title="Simula que otro técnico en campo sincroniza un reporte desde su celular hacia Supabase"
               >
