@@ -19,6 +19,9 @@ import {
   validateVideoFile,
   COMPRESSION_PROFILES
 } from '../../services/imageCompressor.js';
+import { authService } from '../../services/authService.js';
+import { pwaManager } from '../../services/pwaManager.js';
+import { syncQueue } from '../../services/syncQueue.js';
 
 export class CapturaReporteView {
   constructor(rootEl, { onStatsChange } = {}) {
@@ -334,7 +337,7 @@ export class CapturaReporteView {
       estado: 'pendiente',
       ultimo_error: null,
       intentos_sync: 0,
-      creado_por: null,
+      creado_por: authService.getCurrentOperatorIdentifier(),
       creado_en: nowIso,
       actualizado_en: nowIso,
       dispositivo: navigator.userAgent.includes('Mobile') ? 'Móvil Campo' : 'PC / Terminal Mina'
@@ -362,7 +365,7 @@ export class CapturaReporteView {
         estado: 'pendiente',
         ultimo_error: null,
         intentos_sync: 0,
-        creado_por: null,
+        creado_por: authService.getCurrentOperatorIdentifier(),
         creado_en: new Date(Date.now() + 10).toISOString(),
         actualizado_en: new Date(Date.now() + 10).toISOString(),
         dispositivo: navigator.userAgent.includes('Mobile') ? 'Móvil Campo' : 'PC / Terminal Mina'
@@ -382,6 +385,11 @@ export class CapturaReporteView {
       'success',
       `Reporte del equipo ${codigo} guardado en el dispositivo (IndexedDB) en estado "pendiente".`
     );
+
+    // Si hay conexión real y sesión válida en Supabase, iniciar subida automática en segundo plano
+    if (pwaManager.getState().isOnline && authService.getState().isAuthenticatedValid) {
+      syncQueue.processQueue({ triggerSource: 'Nuevo reporte guardado en M1' }).catch(() => {});
+    }
   }
 
   // Cambiar (🔄 Cambiar) una foto o video existente en la Tabla Principal (Inicial o Seguimiento)

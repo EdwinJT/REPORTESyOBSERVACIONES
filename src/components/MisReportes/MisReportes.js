@@ -31,10 +31,11 @@ const ESTADOS_REPORTE = [
 ];
 
 export class MisReportesView {
-  constructor(rootEl, { onStatsChange, onNavigateToCapture } = {}) {
+  constructor(rootEl, { onStatsChange, onNavigateToCapture, onNavigateToSync } = {}) {
     this.rootEl = rootEl;
     this.onStatsChange = onStatsChange || (() => {});
     this.onNavigateToCapture = onNavigateToCapture || (() => {});
+    this.onNavigateToSync = onNavigateToSync || (() => {});
 
     this.reportes = [];
     this.equipos = [];
@@ -405,6 +406,11 @@ export class MisReportesView {
                 ⏳ Pendientes: <strong>${conteoEstados.pendiente}</strong> |
                 ⚠️ Error: <strong>${conteoEstados.error}</strong> |
                 ✅ Sincronizados: <strong>${conteoEstados.sincronizado}</strong>
+              </div>
+              <div style="margin-top:0.4rem;">
+                <button type="button" class="btn-mine btn-sm-mine btn-amber" id="btn-m2-go-sync" style="min-height:32px; font-size:0.8rem; width:100%;">
+                  🔄 Abrir Motor de Sincronización (M5)
+                </button>
               </div>
             </div>
           </div>
@@ -975,6 +981,10 @@ export class MisReportesView {
 
     this.rootEl.querySelector('#btn-goto-m1')?.addEventListener('click', () => {
       this.onNavigateToCapture();
+    });
+
+    this.rootEl.querySelector('#btn-m2-go-sync')?.addEventListener('click', () => {
+      this.onNavigateToSync();
     });
 
     // Laboratorio Escenario P3

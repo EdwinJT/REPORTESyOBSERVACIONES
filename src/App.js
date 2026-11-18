@@ -1,9 +1,12 @@
 /**
- * App Principal — Layout Operativo, Barra de Estado (Red / Pendientes / Cuota / Zoom / Tema Claridad-Noche)
- * y Navegación entre los 3 Módulos de la Entrega 1 (Operación 100 % Local y Offline):
+ * App Principal — Layout Operativo, Barra de Estado (Red / Sesión M4 / Cola M5 / Historial M6 / Pendientes / Cuota / Zoom / Tema Claridad-Noche)
+ * y Navegación entre los 6 Módulos de la PWA (Entrega 1 + Entrega 2 completas):
  * - Módulo 1 (M1 — Captura "Nuevo reporte" y Tabla Operativa Unificada)
  * - Módulo 2 (M2 — Guardado Local, Compresión Previa y Pantalla "Mis reportes")
  * - Módulo 3 (M3 — PWA Instalable, Service Worker Prompt, Precaché App Shell y Modo Sin Conexión P5)
+ * - Módulo 4 (M4 — Inicio de Sesión Resiliente con Supabase Auth, Desacoplamiento Offline P9 y Cierre Seguro)
+ * - Módulo 5 (M5 — Motor y Cola de Sincronización Secuencial: Storage -> Postgres, Mutex, Ping 8s y Backoff)
+ * - Módulo 6 (M6 — Historial Unificado Local+Nube, Catálogo Compartido, Lazy Load createSignedUrl y Exportación Excel .xlsx P10)
  */
 
 import { ensureInitialEquipmentCatalog } from './services/equipmentService.js';
@@ -15,23 +18,31 @@ import {
   calculateAllReportsStorageMetrics
 } from './db/storageManager.js';
 import { localDb } from './db/localDb.js';
+import { supabase } from './config/supabaseClient.js';
 import { getFechaHoyPeru } from './utils/datePeru.js';
 import { pwaManager, APP_SHELL_FILES } from './services/pwaManager.js';
+import { authService } from './services/authService.js';
+import { syncQueue } from './services/syncQueue.js';
 import { CapturaReporteView } from './components/CapturaReporte/CapturaReporte.js';
 import { MisReportesView } from './components/MisReportes/MisReportes.js';
 import { PwaGlobalBanner, PwaModuleView } from './components/PwaBanner/PwaBanner.js';
+import { AuthModuleView } from './components/Auth/Auth.js';
+import { SyncModuleView } from './components/SyncStatus/SyncStatus.js';
+import { HistorialModuleView } from './components/Historial/Historial.js';
 
 export class AppController {
   constructor(mountEl) {
     this.mountEl = mountEl;
     this.isNightTheme = false; // Por defecto inicia en Modo Claridad Industrial
     this.zoomLevel = 0.82; // Vista panorámica por defecto (82%)
-    this.activeModule = 'm3'; // Inicia en el Módulo 3 (PWA Instalable y Modo Sin Conexión)
+    this.activeModule = 'm6'; // Inicia en el Módulo 6 (Historial Unificado, Catálogo Compartido y Exportación a Excel)
     this.pwaBanner = null;
     this.currentView = null;
     this.stats = {
       totalReportes: 0,
       pendientes: 0,
+      sincronizados: 0,
+      unificadosTotal: 0,
       indexedDbBytes: 0,
       storageEst: { isPersisted: false, usageMB: '0.00', quotaMB: '0' },
       precachedCount: APP_SHELL_FILES.length
@@ -43,6 +54,9 @@ export class AppController {
     await requestPersistentStorage();
     await ensureInitialEquipmentCatalog();
     await ensureDemoReportsIfEmpty();
+    supabase.ensureTeamCloudSamplesForM6(getFechaHoyPeru());
+    await authService.init();
+    await syncQueue.init();
     try {
       await Promise.race([
         pwaManager.init(),
@@ -54,6 +68,8 @@ export class AppController {
     await this.refreshGlobalStats();
 
     const pwaState = pwaManager.getState();
+    const authState = authService.getState();
+    const syncState = syncQueue.getState();
 
     this.mountEl.innerHTML = `
       <header class="topbar">
@@ -62,7 +78,7 @@ export class AppController {
           <div>
             <h1 class="brand-title">REPORTES Y OBSERVACIONES DE EQUIPOS MINEROS</h1>
             <p class="brand-subtitle" id="topbar-module-subtitle">
-              Módulo 3 (M3): PWA Instalable, Service Worker (Prompt), Precaché del App Shell y Modo Sin Conexión
+              Módulo 6 (M6): Historial Unificado (Local + Supabase), Catálogo Compartido, Lazy Load (createSignedUrl) y Exportación Excel (.xlsx)
             </p>
           </div>
         </div>
@@ -95,8 +111,23 @@ export class AppController {
             }</span>
           </div>
 
-          <div class="status-pill" id="pill-pending" style="cursor:pointer;" title="Ver reportes pendientes en Mis reportes (M2)">
-            ⏳ Pendientes: <strong id="stat-pendientes" style="color:#fbbf24;">${this.stats.pendientes}</strong>
+          <div
+            class="status-pill ${authState.isAuthenticatedValid ? 'online' : authState.isExpired ? 'offline' : ''}"
+            id="pill-auth"
+            style="cursor:pointer;"
+            title="Estado de sesión Supabase Auth (Clic para abrir Módulo 4)"
+          >
+            <span id="stat-auth-pill">${authState.badgeText}</span>
+          </div>
+
+          <div
+            class="status-pill ${this.stats.pendientes === 0 ? 'online' : ''}"
+            id="pill-pending"
+            style="cursor:pointer;"
+            title="Abrir Cola de Sincronización (Módulo 5)"
+          >
+            <span id="stat-sync-icon">${syncState.isSyncing ? '🔄' : '⏳'}</span>
+            Pendientes: <strong id="stat-pendientes" style="color:#fbbf24;">${this.stats.pendientes}</strong>
           </div>
 
           <div class="status-pill" id="pill-storage" style="cursor:pointer;" title="Almacenamiento local IndexedDB y cuota del dispositivo (M2)">
@@ -112,14 +143,14 @@ export class AppController {
       <!-- Barra Global M3: Estado de Red, Botón Instalar App, Guía iOS y Aviso de Nueva Versión -->
       <div id="pwa-global-banner-mount"></div>
 
-      <!-- Barra de Navegación de Módulos (M1, M2 y M3) con botones >= 48px para uso con guantes -->
+      <!-- Barra de Navegación de los 6 Módulos (M1 a M6) con botones >= 48px para uso con guantes -->
       <nav class="module-navbar" aria-label="Navegación de Módulos">
         <button
           type="button"
           class="module-tab-btn ${this.activeModule === 'm1' ? 'active' : ''}"
           id="tab-btn-m1"
         >
-          <span>📝 M1 — Nuevo Reporte y Tabla Operativa</span>
+          <span>📝 M1 — Nuevo Reporte y Tabla</span>
           <span class="module-tab-badge">Captura + Seguimientos (↳)</span>
         </button>
 
@@ -128,7 +159,7 @@ export class AppController {
           class="module-tab-btn ${this.activeModule === 'm2' ? 'active' : ''}"
           id="tab-btn-m2"
         >
-          <span>💾 M2 — "Mis reportes" y Guardado Local</span>
+          <span>💾 M2 — "Mis reportes" Local</span>
           <span class="module-tab-badge" id="tab-badge-m2">${this.stats.totalReportes} guardados (${formatBytes(this.stats.indexedDbBytes)})</span>
         </button>
 
@@ -137,10 +168,41 @@ export class AppController {
           class="module-tab-btn ${this.activeModule === 'm3' ? 'active' : ''}"
           id="tab-btn-m3"
         >
-          <span>📲 M3 — PWA Instalable y Modo Sin Conexión</span>
+          <span>📲 M3 — PWA y Modo Avión</span>
           <span class="module-tab-badge" id="tab-badge-m3">${
             pwaState.isOnline ? 'App Shell Offline Ready' : '✈️ Modo Avión Activo'
           }</span>
+        </button>
+
+        <button
+          type="button"
+          class="module-tab-btn ${this.activeModule === 'm4' ? 'active' : ''}"
+          id="tab-btn-m4"
+        >
+          <span>🔐 M4 — Supabase Auth</span>
+          <span class="module-tab-badge" id="tab-badge-m4">${authState.badgeText}</span>
+        </button>
+
+        <button
+          type="button"
+          class="module-tab-btn ${this.activeModule === 'm5' ? 'active' : ''}"
+          id="tab-btn-m5"
+        >
+          <span>🔄 M5 — Motor y Cola Sync</span>
+          <span class="module-tab-badge" id="tab-badge-m5">${
+            syncState.isSyncing
+              ? '🔒 Sincronizando...'
+              : `${this.stats.pendientes} pendientes • ${this.stats.sincronizados} en nube`
+          }</span>
+        </button>
+
+        <button
+          type="button"
+          class="module-tab-btn ${this.activeModule === 'm6' ? 'active' : ''}"
+          id="tab-btn-m6"
+        >
+          <span>📊 M6 — Historial Unificado y Excel</span>
+          <span class="module-tab-badge" id="tab-badge-m6">${this.stats.unificadosTotal} unificados • Exportar .xlsx</span>
         </button>
       </nav>
 
@@ -162,10 +224,19 @@ export class AppController {
     const storageEst = await getStorageUsageEstimate();
     const metrics = calculateAllReportsStorageMetrics(reportes);
     const pendientes = reportes.filter((r) => r.estado === 'pendiente' || r.estado === 'error').length;
+    const sincronizados = reportes.filter((r) => r.estado === 'sincronizado').length;
+
+    const cloudSnap = supabase.getCloudSnapshot();
+    const unifiedIds = new Set([
+      ...reportes.map((r) => r.id),
+      ...(cloudSnap.reportesCloud || []).map((r) => r.id)
+    ]);
 
     this.stats = {
       totalReportes: reportes.length,
       pendientes,
+      sincronizados,
+      unificadosTotal: unifiedIds.size,
       indexedDbBytes: metrics.totalIndexedDbMediaBytes,
       storageEst
     };
@@ -184,11 +255,17 @@ export class AppController {
     const tabM1 = this.mountEl.querySelector('#tab-btn-m1');
     const tabM2 = this.mountEl.querySelector('#tab-btn-m2');
     const tabM3 = this.mountEl.querySelector('#tab-btn-m3');
+    const tabM4 = this.mountEl.querySelector('#tab-btn-m4');
+    const tabM5 = this.mountEl.querySelector('#tab-btn-m5');
+    const tabM6 = this.mountEl.querySelector('#tab-btn-m6');
     const subtitle = this.mountEl.querySelector('#topbar-module-subtitle');
 
     tabM1?.classList.toggle('active', moduleId === 'm1');
     tabM2?.classList.toggle('active', moduleId === 'm2');
     tabM3?.classList.toggle('active', moduleId === 'm3');
+    tabM4?.classList.toggle('active', moduleId === 'm4');
+    tabM5?.classList.toggle('active', moduleId === 'm5');
+    tabM6?.classList.toggle('active', moduleId === 'm6');
 
     if (subtitle) {
       if (moduleId === 'm1') {
@@ -197,9 +274,18 @@ export class AppController {
       } else if (moduleId === 'm2') {
         subtitle.textContent =
           'Módulo 2 (M2): Guardado Local en IndexedDB, Imágenes Comprimidas y Pantalla "Mis reportes"';
-      } else {
+      } else if (moduleId === 'm3') {
         subtitle.textContent =
           'Módulo 3 (M3): PWA Instalable, Service Worker (Prompt), Precaché del App Shell y Modo Sin Conexión';
+      } else if (moduleId === 'm4') {
+        subtitle.textContent =
+          'Módulo 4 (M4): Inicio de Sesión Resiliente (Supabase Auth), Desacoplamiento Offline (P9) y Cierre Seguro';
+      } else if (moduleId === 'm5') {
+        subtitle.textContent =
+          'Módulo 5 (M5): Motor y Cola de Sincronización Secuencial (Storage ➔ Postgres, Candado Mutex y Exponential Backoff)';
+      } else {
+        subtitle.textContent =
+          'Módulo 6 (M6): Historial Unificado (Local + Supabase), Catálogo Compartido, Lazy Load (createSignedUrl) y Exportación Excel (.xlsx)';
       }
     }
 
@@ -219,11 +305,47 @@ export class AppController {
         },
         onNavigateToCapture: () => {
           this.switchModule('m1');
+        },
+        onNavigateToSync: () => {
+          this.switchModule('m5');
+        }
+      });
+      await this.currentView.init();
+    } else if (moduleId === 'm3') {
+      this.currentView = new PwaModuleView(viewContainer, {
+        onStatsChange: async () => {
+          await this.refreshGlobalStats();
+          this.updateTopbarStats();
+        },
+        onNavigateModule: (targetMod) => {
+          this.switchModule(targetMod);
+        }
+      });
+      await this.currentView.init();
+    } else if (moduleId === 'm4') {
+      this.currentView = new AuthModuleView(viewContainer, {
+        onStatsChange: async () => {
+          await this.refreshGlobalStats();
+          this.updateTopbarStats();
+        },
+        onNavigateModule: (targetMod) => {
+          this.switchModule(targetMod);
+        }
+      });
+      await this.currentView.init();
+    } else if (moduleId === 'm5') {
+      this.currentView = new SyncModuleView(viewContainer, {
+        onStatsChange: async () => {
+          await this.refreshGlobalStats();
+          this.updateTopbarStats();
+        },
+        onNavigateModule: (targetMod) => {
+          this.switchModule(targetMod);
         }
       });
       await this.currentView.init();
     } else {
-      this.currentView = new PwaModuleView(viewContainer, {
+      this.currentView = new HistorialModuleView(viewContainer, {
         onStatsChange: async () => {
           await this.refreshGlobalStats();
           this.updateTopbarStats();
@@ -250,12 +372,27 @@ export class AppController {
 
   updateTopbarStats() {
     const pendEl = this.mountEl.querySelector('#stat-pendientes');
+    const pendPill = this.mountEl.querySelector('#pill-pending');
+    const syncIcon = this.mountEl.querySelector('#stat-sync-icon');
     const storEl = this.mountEl.querySelector('#stat-storage');
     const tabBadgeM2 = this.mountEl.querySelector('#tab-badge-m2');
     const tabBadgeM3 = this.mountEl.querySelector('#tab-badge-m3');
+    const tabBadgeM4 = this.mountEl.querySelector('#tab-badge-m4');
+    const tabBadgeM5 = this.mountEl.querySelector('#tab-badge-m5');
+    const tabBadgeM6 = this.mountEl.querySelector('#tab-badge-m6');
+    const authPill = this.mountEl.querySelector('#pill-auth');
+    const authPillText = this.mountEl.querySelector('#stat-auth-pill');
     const pwaState = pwaManager.getState();
+    const authState = authService.getState();
+    const syncState = syncQueue.getState();
 
     if (pendEl) pendEl.textContent = String(this.stats.pendientes);
+    if (pendPill) {
+      pendPill.className = `status-pill ${this.stats.pendientes === 0 ? 'online' : ''}`;
+    }
+    if (syncIcon) {
+      syncIcon.textContent = syncState.isSyncing ? '🔄' : '⏳';
+    }
     if (storEl) {
       storEl.textContent = `${formatBytes(this.stats.indexedDbBytes)} (Cuota: ${this.stats.storageEst.usageMB} MB)`;
     }
@@ -266,6 +403,23 @@ export class AppController {
       tabBadgeM3.textContent = pwaState.isOnline
         ? 'App Shell Offline Ready'
         : '✈️ Modo Avión Activo';
+    }
+    if (tabBadgeM4) {
+      tabBadgeM4.textContent = authState.badgeText;
+    }
+    if (tabBadgeM5) {
+      tabBadgeM5.textContent = syncState.isSyncing
+        ? '🔒 Sincronizando...'
+        : `${this.stats.pendientes} pendientes • ${this.stats.sincronizados} en nube`;
+    }
+    if (tabBadgeM6) {
+      tabBadgeM6.textContent = `${this.stats.unificadosTotal} unificados • Exportar .xlsx`;
+    }
+    if (authPill && authPillText) {
+      authPill.className = `status-pill ${
+        authState.isAuthenticatedValid ? 'online' : authState.isExpired ? 'offline' : ''
+      }`;
+      authPillText.textContent = authState.badgeText;
     }
   }
 
@@ -282,12 +436,28 @@ export class AppController {
       this.switchModule('m3');
     });
 
+    this.mountEl.querySelector('#tab-btn-m4')?.addEventListener('click', () => {
+      this.switchModule('m4');
+    });
+
+    this.mountEl.querySelector('#tab-btn-m5')?.addEventListener('click', () => {
+      this.switchModule('m5');
+    });
+
+    this.mountEl.querySelector('#tab-btn-m6')?.addEventListener('click', () => {
+      this.switchModule('m6');
+    });
+
     this.mountEl.querySelector('#pill-network')?.addEventListener('click', () => {
       this.switchModule('m3');
     });
 
+    this.mountEl.querySelector('#pill-auth')?.addEventListener('click', () => {
+      this.switchModule('m4');
+    });
+
     this.mountEl.querySelector('#pill-pending')?.addEventListener('click', () => {
-      this.switchModule('m2');
+      this.switchModule('m5');
     });
 
     this.mountEl.querySelector('#pill-storage')?.addEventListener('click', () => {
@@ -313,6 +483,15 @@ export class AppController {
 
     pwaManager.subscribe((pwaState) => {
       this.updateNetworkPill(pwaState);
+      this.updateTopbarStats();
+    });
+
+    authService.subscribe(() => {
+      this.updateTopbarStats();
+    });
+
+    syncQueue.subscribe(async () => {
+      await this.refreshGlobalStats();
       this.updateTopbarStats();
     });
   }

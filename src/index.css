@@ -1094,3 +1094,552 @@ body.theme-night .pwa-top-strip.is-online {
   justify-content: center;
   flex-shrink: 0;
 }
+
+/* ==========================================================================
+   M4 — Inicio de Sesión Resiliente (Supabase Auth), Desacoplamiento Offline
+   (Escenario P9 / Riesgo R6) y Auditoría de Seguridad (Riesgo R7)
+   ========================================================================== */
+
+.alert-warning-mine {
+  background: #fef3c7;
+  color: #451a03;
+  border: 2px solid #d97706;
+  border-left: 6px solid #b45309;
+}
+
+.m4-nonblocking-notice {
+  background: #fef3c7;
+  color: #451a03;
+  border: 2px solid #d97706;
+  border-left: 6px solid #b45309;
+  border-radius: 10px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.88rem;
+  box-shadow: 0 3px 10px rgba(15, 23, 42, 0.1);
+}
+
+.m4-auth-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 1rem;
+}
+
+.m4-auth-card {
+  background: var(--bg-card);
+  border: 2px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+  color: var(--text-main);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.m4-no-signup-box {
+  background: #f8fafc;
+  color: #0f172a;
+  border: 2px dashed #475569;
+  border-radius: 8px;
+  padding: 0.65rem 0.8rem;
+}
+
+.m4-session-details {
+  background: #ffffff;
+  color: #0f172a;
+  border: 2px solid #64748b;
+  border-radius: 8px;
+  padding: 0.7rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.m4-detail-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  font-size: 0.84rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.m4-detail-row:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.m4-session-empty {
+  background: #e0f2fe;
+  color: #0c4a6e;
+  border: 2px solid #0284c7;
+  border-radius: 8px;
+  padding: 0.85rem;
+}
+
+/* ==========================================================================
+   M5 — Motor y Cola de Sincronización (Storage -> Postgres, Mutex, Backoff)
+   ========================================================================== */
+
+.m5-pipeline-box {
+  background: #0f172a;
+  color: #f8fafc;
+  border: 2px solid #f59e0b;
+  border-radius: 10px;
+  padding: 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.m5-pipeline-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-bottom: 1px solid #334155;
+  padding-bottom: 0.55rem;
+}
+
+.m5-phase-pill {
+  background: #fbbf24;
+  color: #0f172a;
+  font-weight: 900;
+  font-size: 0.78rem;
+  padding: 0.22rem 0.65rem;
+  border-radius: 999px;
+  font-family: monospace;
+}
+
+.m5-phases-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.65rem;
+}
+
+.m5-phase-step {
+  background: #1e293b;
+  color: #e2e8f0;
+  border: 2px solid #475569;
+  border-radius: 8px;
+  padding: 0.65rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.m5-phase-step.active {
+  background: #451a03;
+  border-color: #fbbf24;
+  color: #fef3c7;
+  box-shadow: 0 0 0 2px rgba(251, 191, 36, 0.35);
+}
+
+.m5-phase-Step p,
+.m5-phase-step p {
+  margin: 0.2rem 0 0 0;
+  font-size: 0.78rem;
+  color: #cbd5e1;
+}
+
+.m5-phase-num {
+  display: inline-block;
+  align-self: flex-start;
+  background: #fbbf24;
+  color: #0f172a;
+  font-weight: 900;
+  font-size: 0.72rem;
+  padding: 0.14rem 0.48rem;
+  border-radius: 4px;
+}
+
+.m5-live-status-line {
+  background: #1e293b;
+  border: 1px solid #475569;
+  border-radius: 7px;
+  padding: 0.5rem 0.75rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+  color: #fde047;
+}
+
+.m5-actions-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.m5-labs-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+  gap: 0.9rem;
+}
+
+.m5-lab-card {
+  background: var(--bg-card);
+  color: var(--text-main);
+  border: 2px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 0.95rem 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.m5-lab-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.92rem;
+}
+
+/* ==========================================================================
+   M6 — Historial Unificado (Local + Supabase), Catálogo Compartido,
+   Diseño Adaptable (PC Tabla 2 Columnas / Celular Tarjetas), Lazy Load
+   createSignedUrl y Exportación a Excel (.xlsx)
+   ========================================================================== */
+
+.m6-two-column-layout {
+  display: grid;
+  grid-template-columns: 350px 1fr;
+  gap: 1.1rem;
+  align-items: start;
+}
+
+@media (max-width: 1080px) {
+  .m6-two-column-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.m6-sidebar-column,
+.m6-content-column {
+  min-width: 0;
+}
+
+.m6-filter-summary-box {
+  background: #f0f9ff;
+  color: #0f172a;
+  border: 2px solid #0284c7;
+  border-radius: 9px;
+  padding: 0.65rem 0.8rem;
+  font-size: 0.84rem;
+}
+
+.m6-shared-catalog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.m6-catalog-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 48px;
+  padding: 0.5rem 0.75rem;
+  background: #ffffff;
+  color: #0f172a;
+  border: 2px solid #64748b;
+  border-radius: 9px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.m6-catalog-chip:hover {
+  border-color: #0284c7;
+  background: #f0f9ff;
+}
+
+.m6-catalog-chip.active {
+  background: #0f172a;
+  color: #fbbf24;
+  border-color: #d97706;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.35);
+}
+
+.m6-catalog-origin {
+  display: block;
+  font-size: 0.73rem;
+  font-weight: 700;
+  color: #475569;
+  margin-top: 0.12rem;
+}
+
+.m6-catalog-chip.active .m6-catalog-origin {
+  color: #fde047;
+}
+
+.m6-catalog-origin.from-cloud {
+  color: #0284c7;
+}
+
+.m6-catalog-chip.active .m6-catalog-origin.from-cloud {
+  color: #38bdf8;
+}
+
+.m6-catalog-count {
+  background: #e2e8f0;
+  color: #0f172a;
+  font-weight: 900;
+  font-size: 0.78rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.m6-catalog-chip.active .m6-catalog-count {
+  background: #fbbf24;
+  color: #0f172a;
+}
+
+.m6-view-mode-switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+/* Diseño adaptable: PC Tabla vs Celular Tarjetas */
+.m6-responsive-list-wrapper.mode-table .m6-desktop-table-view {
+  display: block;
+}
+.m6-responsive-list-wrapper.mode-table .m6-mobile-cards-view {
+  display: none;
+}
+
+.m6-responsive-list-wrapper.mode-cards .m6-desktop-table-view {
+  display: none;
+}
+.m6-responsive-list-wrapper.mode-cards .m6-mobile-cards-view {
+  display: block;
+}
+
+.m6-responsive-list-wrapper.mode-auto .m6-desktop-table-view {
+  display: block;
+}
+.m6-responsive-list-wrapper.mode-auto .m6-mobile-cards-view {
+  display: none;
+}
+
+@media (max-width: 820px) {
+  .m6-responsive-list-wrapper.mode-auto .m6-desktop-table-view {
+    display: none;
+  }
+  .m6-responsive-list-wrapper.mode-auto .m6-mobile-cards-view {
+    display: block;
+  }
+}
+
+.m6-origin-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.74rem;
+  font-weight: 900;
+  padding: 0.2rem 0.55rem;
+  border-radius: 6px;
+}
+
+.m6-origin-pill.local-and-cloud {
+  background: #dcfce7;
+  color: #14532d;
+  border: 2px solid #16a34a;
+}
+
+.m6-origin-pill.cloud-other {
+  background: #e0f2fe;
+  color: #0c4a6e;
+  border: 2px solid #0284c7;
+}
+
+.m6-origin-pill.local-only {
+  background: #fef08a;
+  color: #713f12;
+  border: 2px solid #d97706;
+}
+
+.m6-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 0.9rem;
+}
+
+.m6-mobile-card {
+  background: #ffffff;
+  color: #0f172a;
+  border: 2px solid #334155;
+  border-radius: 11px;
+  padding: 0.9rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  box-shadow: 0 3px 8px rgba(15, 23, 42, 0.08);
+}
+
+.m6-mobile-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding-bottom: 0.55rem;
+  border-bottom: 2px solid #cbd5e1;
+}
+
+.m6-mobile-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  font-size: 0.8rem;
+  color: #334155;
+}
+
+.m6-mobile-card-obs {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-left: 5px solid #0284c7;
+  border-radius: 8px;
+  padding: 0.6rem 0.75rem;
+  font-size: 0.88rem;
+}
+
+.m6-mobile-card-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.4rem;
+}
+
+/* Modal de Detalle con Carga Diferida (createSignedUrl) */
+.m6-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.78);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  overflow-y: auto;
+}
+
+.m6-modal-dialog {
+  background: #ffffff;
+  color: #0f172a;
+  border: 3px solid #f59e0b;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 980px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+}
+
+.m6-modal-header {
+  background: #0f172a;
+  color: #ffffff;
+  padding: 0.85rem 1.1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 3px solid #f59e0b;
+}
+
+.m6-modal-body {
+  padding: 1rem 1.15rem;
+  overflow-y: auto;
+}
+
+.m6-modal-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.6rem;
+  background: #f1f5f9;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 0.65rem 0.85rem;
+  font-size: 0.85rem;
+}
+
+.m6-signed-photos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 0.85rem;
+}
+
+.m6-signed-photo-card {
+  background: #f8fafc;
+  border: 2px solid #475569;
+  border-radius: 10px;
+  padding: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.m6-signed-photo-img-wrap {
+  position: relative;
+  width: 100%;
+  height: 210px;
+  background: #0f172a;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #334155;
+}
+
+.m6-signed-photo-img-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.m6-signed-photo-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+}
+
+.m6-signed-url-box {
+  background: #0f172a;
+  color: #4ade80;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.73rem;
+  word-break: break-all;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.m6-signed-url-box strong {
+  color: #fbbf24;
+}
+
+
+

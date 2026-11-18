@@ -3,28 +3,37 @@
  * Precaché del App Shell y Estado de Red / Modo Avión (Escenario P5).
  */
 
-export const APP_SHELL_MANIFEST_VERSION = 'v1.3.1-m3';
+export const APP_SHELL_MANIFEST_VERSION = 'v1.6.0-m6';
 export const APP_SHELL_CACHE_NAME = `mineria-pwa-appshell-${APP_SHELL_MANIFEST_VERSION}`;
 
 export const APP_SHELL_FILES = [
   { path: './index.html', category: 'HTML Principal', desc: 'Documento raíz con meta tags PWA e íconos Apple Touch' },
   { path: './manifest.webmanifest', category: 'Web App Manifest', desc: 'Configuración display: standalone, íconos 192x192 y 512x512' },
+  { path: './supabase_setup.sql', category: 'Script SQL (M4/M5)', desc: 'Tabla public.reportes, bucket privado fotos y políticas RLS auth.uid()' },
   { path: './public/pwa-192x192.png', category: 'Ícono PWA 192px', desc: 'Ícono estándar de alto contraste para pantalla de inicio' },
   { path: './public/pwa-512x512.png', category: 'Ícono PWA 512px', desc: 'Ícono alta resolución y maskable para splash screen' },
   { path: './public/apple-touch-icon.png', category: 'Ícono Apple Touch', desc: 'Ícono 180x180 para iOS Safari ("Agregar a inicio")' },
   { path: './src/main.js', category: 'App Shell JS', desc: 'Punto de entrada y arranque del controlador principal' },
-  { path: './src/App.js', category: 'App Shell JS', desc: 'Layout operativo, barra de estado y enrutador M1 / M2 / M3' },
+  { path: './src/App.js', category: 'App Shell JS', desc: 'Layout operativo, barra de estado y enrutador M1..M6' },
   { path: './src/index.css', category: 'App Shell CSS', desc: 'Estilos de alto contraste (Modo Claridad Día y Modo Noche) >= 48px' },
+  { path: './src/config/supabaseClient.js', category: 'Cliente Supabase (M4/M5/M6)', desc: 'Auth, Storage (upsert + createSignedUrl) y Postgres (upsert + select)' },
   { path: './src/db/localDb.js', category: 'Base de Datos Local', desc: 'Motor IndexedDB (tablas reportes y equipos)' },
   { path: './src/db/storageManager.js', category: 'Persistencia Local', desc: 'Gestión de navigator.storage.persist() y estimate()' },
   { path: './src/services/imageCompressor.js', category: 'Compresor Multimedia', desc: 'Compresión previa a IndexedDB (<400KB / <800KB)' },
-  { path: './src/services/equipmentService.js', category: 'Catálogo Equipos', desc: 'Normalización y persistencia de códigos de equipo' },
+  { path: './src/services/equipmentService.js', category: 'Catálogo Compartido (M1/M6)', desc: 'Normalización, persistencia y sincronización de códigos Local + Nube' },
   { path: './src/services/pwaManager.js', category: 'Motor PWA (M3)', desc: 'Registro Service Worker (prompt), instalación y precaché' },
+  { path: './src/services/authService.js', category: 'Autenticación (M4)', desc: 'Inicio de sesión resiliente, desacoplamiento P9 y cierre seguro' },
+  { path: './src/services/connectivity.js', category: 'Conectividad Real (M5)', desc: 'Ping HTTP con AbortController (8 s) y detección de Lie-Fi (P8)' },
+  { path: './src/services/syncQueue.js', category: 'Motor y Cola Sync (M5)', desc: 'Mutex, 2 fases (Storage -> Postgres) y Exponential Backoff (30s/2m/10m)' },
+  { path: './src/services/excelExporter.js', category: 'Exportador Excel (M6)', desc: 'Generador OpenXML .xlsx de reportes filtrados sin URLs firmadas (P10)' },
   { path: './src/utils/datePeru.js', category: 'Zona Horaria Lima', desc: 'Cálculo estricto America/Lima (UTC-5) sin desfase UTC' },
   { path: './src/utils/codeNormalizer.js', category: 'Normalizador', desc: 'Estandarización de códigos (ej. 793f 05 -> 793F-05)' },
   { path: './src/components/CapturaReporte/CapturaReporte.js', category: 'Módulo 1 (UI)', desc: 'Captura Nuevo Reporte y Tabla Operativa' },
   { path: './src/components/MisReportes/MisReportes.js', category: 'Módulo 2 (UI)', desc: 'Pantalla Mis reportes y auditoría de pesos IndexedDB' },
-  { path: './src/components/PwaBanner/PwaBanner.js', category: 'Módulo 3 (UI)', desc: 'Panel PWA Instalable, Modo Avión P5 y Guía iOS/Android' }
+  { path: './src/components/PwaBanner/PwaBanner.js', category: 'Módulo 3 (UI)', desc: 'Panel PWA Instalable, Modo Avión P5 y Guía iOS/Android' },
+  { path: './src/components/Auth/Auth.js', category: 'Módulo 4 (UI)', desc: 'Panel Supabase Auth, Laboratorio Escenario P9 y Auditoría R7' },
+  { path: './src/components/SyncStatus/SyncStatus.js', category: 'Módulo 5 (UI)', desc: 'Panel Motor de Sincronización y Laboratorios P6, P7 y P8' },
+  { path: './src/components/Historial/Historial.js', category: 'Módulo 6 (UI)', desc: 'Historial Unificado, Catálogo Compartido, Lazy Load y Exportación Excel P10' }
 ];
 
 class PwaManagerService {

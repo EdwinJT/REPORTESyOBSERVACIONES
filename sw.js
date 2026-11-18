@@ -5,30 +5,39 @@
  * abra en Modo Avión (Escenario P5) tras cerrarse completamente.
  */
 
-const CACHE_VERSION = 'v1.3.1-m3';
+const CACHE_VERSION = 'v1.6.0-m6';
 const APP_SHELL_CACHE = `mineria-pwa-appshell-${CACHE_VERSION}`;
 
 const PRECACHE_ASSETS = [
   './',
   './index.html',
   './manifest.webmanifest',
+  './supabase_setup.sql',
   './public/pwa-192x192.png',
   './public/pwa-512x512.png',
   './public/apple-touch-icon.png',
   './src/main.js',
   './src/App.js',
   './src/index.css',
+  './src/config/supabaseClient.js',
   './src/db/localDb.js',
   './src/db/storageManager.js',
   './src/services/equipmentService.js',
   './src/services/imageCompressor.js',
   './src/services/pwaManager.js',
+  './src/services/authService.js',
+  './src/services/connectivity.js',
+  './src/services/syncQueue.js',
+  './src/services/excelExporter.js',
   './src/utils/codeNormalizer.js',
   './src/utils/datePeru.js',
   './src/components/CapturaReporte/CapturaReporte.js',
   './src/components/CapturaReporte/demoSeed.js',
   './src/components/MisReportes/MisReportes.js',
-  './src/components/PwaBanner/PwaBanner.js'
+  './src/components/PwaBanner/PwaBanner.js',
+  './src/components/Auth/Auth.js',
+  './src/components/SyncStatus/SyncStatus.js',
+  './src/components/Historial/Historial.js'
 ];
 
 self.addEventListener('install', (event) => {
