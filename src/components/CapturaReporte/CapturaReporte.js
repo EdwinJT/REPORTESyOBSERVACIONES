@@ -7,12 +7,14 @@
  */
 
 import { localDb } from '../../db/localDb.js';
+import { supabase } from '../../config/supabaseClient.js';
 import { formatBytes, getStorageUsageEstimate } from '../../db/storageManager.js';
 import { getFechaHoyPeru, getHoraActualPeru, esFechaValida } from '../../utils/datePeru.js';
 import { normalizeEquipmentCode } from '../../utils/codeNormalizer.js';
 import {
   getAllEquipments,
-  createOrTouchEquipment
+  createOrTouchEquipment,
+  syncEquipmentsFromCloudReports
 } from '../../services/equipmentService.js';
 import {
   compressPhotoFile,
@@ -84,11 +86,98 @@ export class CapturaReporteView {
   }
 
   async reloadData() {
+    const rawLocal = await localDb.reportes.toArray();
+    const authState = authService.getState();
+    let mergedReports = [...rawLocal];
+
+    // Si hay sesión real en Supabase Cloud, descargar reportes de todos los dispositivos y fusionarlos en la tabla principal
+    if (authState.isRealCloudSession && pwaManager.getState().isOnline) {
+      try {
+        const res = await supabase.from('reportes').select();
+        if (Array.isArray(res.data) && res.data.length > 0) {
+          await syncEquipmentsFromCloudReports(res.data, rawLocal);
+          const mergedMap = new Map();
+          for (const loc of rawLocal) {
+            mergedMap.set(loc.id, loc);
+          }
+
+          for (const rem of res.data) {
+            const existingLoc = mergedMap.get(rem.id);
+            if (existingLoc) {
+              mergedMap.set(rem.id, {
+                ...existingLoc,
+                ...rem,
+                fotos_locales: existingLoc.fotos_locales || [],
+                video_local: existingLoc.video_local || null,
+                fotos_rutas: Array.isArray(rem.fotos) ? rem.fotos : existingLoc.fotos_rutas || [],
+                estado: 'sincronizado',
+                sincronizado_en_nube_real: true
+              });
+            } else {
+              // Reporte creado en otro celular o PC: firmar URLs para vista previa real en tabla principal
+              const cloudPhotos = [];
+              const remotePaths = Array.isArray(rem.fotos) ? rem.fotos : [];
+              for (let i = 0; i < remotePaths.length; i++) {
+                const signed = await supabase.storage.from('fotos').createSignedUrl(remotePaths[i], 3600);
+                cloudPhotos.push({
+                  indice: i + 1,
+                  blob: null,
+                  signedUrl: signed?.data?.signedUrl || '',
+                  ruta_remota: remotePaths[i],
+                  peso_bytes: 0,
+                  ancho: rem.calidad_compresion === 'alta' ? 2048 : 1600,
+                  alto: rem.calidad_compresion === 'alta' ? 1536 : 1200
+                });
+              }
+
+              const cloudSegs = [];
+              if (Array.isArray(rem.seguimientos)) {
+                for (const seg of rem.seguimientos) {
+                  const segFotosLocales = [];
+                  const segPaths = Array.isArray(seg.fotos) ? seg.fotos : [];
+                  for (let si = 0; si < segPaths.length; si++) {
+                    const signedSeg = await supabase.storage.from('fotos').createSignedUrl(segPaths[si], 3600);
+                    segFotosLocales.push({
+                      indice: si + 1,
+                      blob: null,
+                      signedUrl: signedSeg?.data?.signedUrl || '',
+                      ruta_remota: segPaths[si],
+                      peso_bytes: 0,
+                      ancho: 1600,
+                      alto: 1200
+                    });
+                  }
+                  cloudSegs.push({
+                    ...seg,
+                    fotos_locales: segFotosLocales
+                  });
+                }
+              }
+
+              mergedMap.set(rem.id, {
+                ...rem,
+                es_nuevo_codigo: Boolean(rem.fuera_catalogo),
+                fotos_locales: cloudPhotos,
+                fotos_rutas: remotePaths,
+                video_local: null,
+                seguimientos: cloudSegs,
+                estado: 'sincronizado',
+                sincronizado_en_nube_real: true,
+                desde_otro_dispositivo: true
+              });
+            }
+          }
+          mergedReports = Array.from(mergedMap.values());
+        }
+      } catch {
+        // Si falla la red momentáneamente, continuar con IndexedDB local
+      }
+    }
+
     this.equipos = await getAllEquipments();
-    const rawReportes = await localDb.reportes.toArray();
-    this.reportes = rawReportes.sort((a, b) => (b.creado_en || '').localeCompare(a.creado_en || ''));
+    this.reportes = mergedReports.sort((a, b) => (b.creado_en || '').localeCompare(a.creado_en || ''));
     const storageEst = await getStorageUsageEstimate();
-    const pendientes = this.reportes.filter((r) => r.estado === 'pendiente' || r.estado === 'error').length;
+    const pendientes = rawLocal.filter((r) => r.estado === 'pendiente' || r.estado === 'error').length;
     this.onStatsChange({
       totalReportes: this.reportes.length,
       pendientes,
@@ -1027,7 +1116,7 @@ export class CapturaReporteView {
               <div class="preview-strip">
                 ${(rep.fotos_locales || [])
                   .map((f, fIdx) => {
-                    const url = this.createObjectUrl(f.blob);
+                    const url = f.blob ? this.createObjectUrl(f.blob) : (f.signedUrl || '');
                     return `
                     <img
                       src="${url}"
@@ -1072,7 +1161,7 @@ export class CapturaReporteView {
                         ? `<span style="font-size:0.78rem; color:var(--text-muted);">Sin foto adjunta</span>`
                         : segFotos
                             .map((f, fIdx) => {
-                              const url = this.createObjectUrl(f.blob);
+                              const url = f.blob ? this.createObjectUrl(f.blob) : (f.signedUrl || '');
                               return `
                               <img
                                 src="${url}"
@@ -1239,11 +1328,17 @@ export class CapturaReporteView {
         <!-- COL 7: ESTADO -->
         <td>
           <div style="display:flex; flex-direction:column; gap:0.5rem;">
-            <span class="badge badge-pending">
-              ⏳ ${this.escapeHtml(rep.estado.toUpperCase())}
+            <span class="badge ${rep.sincronizado_en_nube_real ? 'badge-baja' : 'badge-pending'}">
+              ${rep.sincronizado_en_nube_real ? '☁️ EN NUBE' : `⏳ ${this.escapeHtml(rep.estado.toUpperCase())}`}
             </span>
             <span style="font-size:0.75rem; color:var(--text-muted);">
-              Guardado en IndexedDB local
+              ${
+                rep.desde_otro_dispositivo
+                  ? 'Descargado de Supabase Cloud'
+                  : rep.sincronizado_en_nube_real
+                    ? 'Confirmado en Supabase Cloud'
+                    : 'Guardado solo en este dispositivo'
+              }
             </span>
           </div>
         </td>
@@ -1253,8 +1348,8 @@ export class CapturaReporteView {
 
   renderViewerModal() {
     if (!this.viewerModal) return '';
-    const { title, blob, isVideo, meta } = this.viewerModal;
-    const url = this.createObjectUrl(blob);
+    const { title, blob, signedUrl, isVideo, meta } = this.viewerModal;
+    const url = blob ? this.createObjectUrl(blob) : (signedUrl || '');
     return `
       <div class="modal-backdrop" id="modal-viewer-backdrop">
         <div class="modal-card">
@@ -1617,9 +1712,10 @@ export class CapturaReporteView {
           title: `Equipo ${rep.codigo_equipo} — ${
             segAttr === 'null' ? 'Evidencia Inicial' : `Seguimiento #${Number(segAttr) + 1}`
           }`,
-          blob: foto.blob,
+          blob: foto.blob || null,
+          signedUrl: foto.signedUrl || '',
           isVideo: false,
-          meta: `Fecha: ${target.fecha || rep.fecha} | Dimensiones: ${foto.ancho}×${foto.alto} px | Peso: ${formatBytes(foto.peso_bytes)}`
+          meta: `Fecha: ${target.fecha || rep.fecha} | Dimensiones: ${foto.ancho}×${foto.alto} px | ${foto.peso_bytes ? 'Peso: ' + formatBytes(foto.peso_bytes) : 'Imagen en Supabase Cloud'}`
         };
         this.render();
       });

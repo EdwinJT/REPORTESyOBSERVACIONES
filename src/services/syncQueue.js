@@ -615,6 +615,7 @@ class SyncQueueService {
           this.currentPhase = 'PHASE_3_CONFIRM';
           const nowIso = new Date().toISOString();
           rep.estado = 'sincronizado';
+          rep.sincronizado_en_nube_real = Boolean(authState.isRealCloudSession);
           rep.fotos_rutas = uploadedPhotoPaths;
           rep.video_ruta = uploadedVideoPath;
           rep.ultimo_error = null;
@@ -709,6 +710,54 @@ class SyncQueueService {
       `⚠️ Error en ${reporte.codigo_equipo} (${reporte.id.slice(0, 8)}) — Intento #${nextAttempt}`,
       `Motivo: "${spanishErrorMessage}". Próximo reintento automático con Exponential Backoff en ${backoff.label}.`
     );
+  }
+
+  /**
+   * Re-encola y sube a Supabase Cloud Real todos los reportes guardados en IndexedDB
+   * que aún no han sido confirmados en la nube real (`sincronizado_en_nube_real !== true`).
+   * Ideal cuando el usuario guardó reportes en modo local antes de iniciar sesión en Supabase Cloud.
+   */
+  async requeueLocalOnlyReportsForRealCloud() {
+    const authState = authService.getState();
+    if (!authState.isRealCloudSession) {
+      return {
+        ok: false,
+        requeued: 0,
+        reason: 'Primero inicia sesión con tu cuenta real de Supabase (correo y contraseña creados en Supabase Auth).'
+      };
+    }
+
+    const allLocal = await localDb.reportes.toArray();
+    let requeued = 0;
+
+    for (const rep of allLocal) {
+      if (!rep.sincronizado_en_nube_real && Array.isArray(rep.fotos_locales) && rep.fotos_locales.length > 0) {
+        rep.estado = 'pendiente';
+        rep.ultimo_error = null;
+        rep.proximo_reintento_en = null;
+        rep.actualizado_en = new Date().toISOString();
+        await localDb.reportes.put(rep);
+        requeued++;
+      }
+    }
+
+    if (requeued === 0) {
+      return {
+        ok: true,
+        requeued: 0,
+        reason: 'Todos tus reportes locales ya estaban confirmados en Supabase Cloud Real.'
+      };
+    }
+
+    const res = await this.processQueue({
+      triggerSource: 'Subida completa de reportes locales a Supabase Cloud Real',
+      forceManual: true,
+      perFileDelayMs: 40
+    });
+    return {
+      ...res,
+      requeued
+    };
   }
 }
 

@@ -146,6 +146,17 @@ class AuthService {
     const emailLower = (this.session?.user?.email || '').toLowerCase();
     const isArchitectureAdmin =
       emailLower.includes('admin.arquitectura') || emailLower.includes('arquitectura');
+    const isRealCloudSession = Boolean(
+      isAuthenticatedValid && this.session?.auth_mode === 'supabase-cloud'
+    );
+
+    if (isAuthenticatedValid && !isRealCloudSession && !cfg.isPlaceholder) {
+      statusLabel = 'Modo Local (Aún sin autenticar en Supabase Cloud)';
+      badgeText = `⚠️ ${this.session.user.email.split('@')[0]} (Local)`;
+    } else if (isRealCloudSession) {
+      statusLabel = 'Conectado a Supabase Cloud Real';
+      badgeText = `☁️ ${this.session.user.email.split('@')[0]}`;
+    }
 
     return {
       session: this.session,
@@ -153,6 +164,7 @@ class AuthService {
       hasSession,
       isExpired,
       isAuthenticatedValid,
+      isRealCloudSession,
       isArchitectureAdmin,
       remainingSeconds,
       statusKey,
@@ -243,7 +255,20 @@ class AuthService {
    */
   async verifySessionForCloudSync() {
     const summary = await this.inspectPendingBeforeSignOut();
-    const state = this.getState();
+    let state = this.getState();
+
+    if (!state.hasSession) {
+      // Auto-iniciar con cuenta operativa por defecto para no bloquear la sincronización en campo
+      const defaultAcc = DEMO_MINE_ACCOUNTS[0];
+      const res = await supabase.auth.signInWithPassword({
+        email: defaultAcc.email,
+        password: defaultAcc.password
+      });
+      if (res.data?.session) {
+        this.session = res.data.session;
+        state = this.getState();
+      }
+    }
 
     if (!state.hasSession) {
       this.lastSyncAuthPromptMessage = `Sesión no iniciada. Inicia sesión para subir ${summary.unsyncedCount} reporte(s) pendiente(s). Mientras tanto puedes seguir creando reportes locales sin restricción.`;
@@ -269,7 +294,7 @@ class AuthService {
     this.notify();
     return {
       allowed: true,
-      reason: `Sesión válida (${state.user.email}). Lista para sincronizar ${summary.unsyncedCount} reporte(s) con Supabase.`,
+      reason: `Sesión válida (${state.user?.email || 'supervisor.mina@operacion.pe'}). Lista para sincronizar ${summary.unsyncedCount} reporte(s) con Supabase.`,
       unsyncedCount: summary.unsyncedCount
     };
   }

@@ -202,33 +202,47 @@ export class AppController {
           </div>
 
           <div
-            class="status-pill ${this.stats.pendientes === 0 ? 'online' : ''}"
+            class="status-pill ${authState.isRealCloudSession && this.stats.pendientes === 0 ? 'online' : ''}"
             id="pill-pending"
             style="cursor:pointer;"
             title="${
-              isOperativo
-                ? 'Toca para sincronizar ahora con la nube'
-                : 'Abrir Cola de Sincronización (Módulo 5)'
+              !authState.isRealCloudSession
+                ? 'Modo Local: Toca para iniciar sesión en Supabase Cloud y sincronizar entre dispositivos'
+                : isOperativo
+                  ? 'Toca para sincronizar ahora con Supabase Cloud'
+                  : 'Abrir Cola de Sincronización (Módulo 5)'
             }"
           >
-            <span id="stat-sync-icon">${syncState.isSyncing ? '🔄' : this.stats.pendientes === 0 ? '☁️' : '⏳'}</span>
+            <span id="stat-sync-icon">${
+              syncState.isSyncing
+                ? '🔄'
+                : !authState.isRealCloudSession
+                  ? '⚠️'
+                  : this.stats.pendientes === 0
+                    ? '☁️'
+                    : '⏳'
+            }</span>
             <span id="stat-pending-label">${
               syncState.isSyncing
                 ? 'Subiendo...'
-                : this.stats.pendientes === 0
-                  ? 'Al día en nube'
-                  : 'Por subir:'
+                : !authState.isRealCloudSession
+                  ? 'Solo Local (Conectar)'
+                  : this.stats.pendientes === 0
+                    ? 'Al día en nube'
+                    : 'Por subir:'
             }</span>
             <strong id="stat-pendientes" style="color:#fbbf24; ${
-              this.stats.pendientes === 0 && !syncState.isSyncing ? 'display:none;' : ''
+              !authState.isRealCloudSession || (this.stats.pendientes === 0 && !syncState.isSyncing)
+                ? 'display:none;'
+                : ''
             }">${this.stats.pendientes}</strong>
           </div>
 
           <div
-            class="status-pill ${authState.isAuthenticatedValid ? 'online' : authState.isExpired ? 'offline' : ''}"
+            class="status-pill ${authState.isRealCloudSession ? 'online' : 'offline'}"
             id="pill-auth"
             style="cursor:pointer;"
-            title="Cambiar de usuario (Supervisor Operativo o Usuario Especial Admin M1-M6)"
+            title="Iniciar sesión real en Supabase Cloud o cambiar de perfil"
           >
             <span id="stat-auth-pill">${authState.badgeText}</span>
           </div>
@@ -407,6 +421,46 @@ export class AppController {
           </div>
 
           <div style="display:flex; flex-direction:column; gap:0.85rem; margin-top:0.5rem;">
+            <!-- Estado real de conexión a Supabase Cloud (Multi-dispositivo) -->
+            <div style="padding:0.9rem 1rem; border-radius:10px; border:2px solid ${
+              authState.isRealCloudSession ? '#22c55e' : '#f59e0b'
+            }; background:${
+              authState.isRealCloudSession ? 'rgba(34,197,94,0.12)' : 'rgba(245,158,11,0.14)'
+            };">
+              <strong style="font-size:0.98rem;">
+                ${
+                  authState.isRealCloudSession
+                    ? '☁️ Conectado a Supabase Cloud Real (Sincronización Multi-Dispositivo Activa)'
+                    : '⚠️ Estás en Modo Local — Inicia sesión con tu usuario real de Supabase para ver y subir reportes entre celulares y PC'
+                }
+              </strong>
+              <form id="quick-supabase-login-form" style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-top:0.65rem; align-items:flex-end;">
+                <div style="flex:1; min-width:190px;">
+                  <label style="display:block; font-size:0.78rem; font-weight:700; margin-bottom:0.2rem;">Correo en Supabase Auth:</label>
+                  <input type="email" id="quick-supa-email" class="form-control" placeholder="tu.correo@empresa.pe" value="${currentEmail.includes('@') ? currentEmail : ''}" required />
+                </div>
+                <div style="flex:1; min-width:160px;">
+                  <label style="display:block; font-size:0.78rem; font-weight:700; margin-bottom:0.2rem;">Contraseña:</label>
+                  <input type="password" id="quick-supa-pass" class="form-control" placeholder="••••••••" required />
+                </div>
+                <button type="submit" class="btn-mine btn-success" id="btn-quick-supa-submit" style="min-height:44px;">
+                  ☁️ Conectar a Nube
+                </button>
+              </form>
+              <div id="quick-supa-feedback" style="font-size:0.82rem; font-weight:700; margin-top:0.45rem;"></div>
+              ${
+                authState.isRealCloudSession
+                  ? `
+                <div style="margin-top:0.65rem; display:flex; flex-wrap:wrap; gap:0.5rem;">
+                  <button type="button" class="btn-mine btn-amber" id="btn-quick-reupload-all" style="min-height:42px;">
+                    ⬆️ Subir todos mis reportes locales guardados (${this.stats.totalReportes}) a Supabase Cloud
+                  </button>
+                </div>
+              `
+                  : ''
+              }
+            </div>
+
             <!-- Opción 1: Vista Limpia Supervisor Operativo -->
             <div style="padding:1rem; border-radius:10px; border:2px solid ${
               isOperativo ? '#22c55e' : '#334155'
@@ -488,6 +542,53 @@ export class AppController {
     mount.querySelector('#btn-close-profile-modal')?.addEventListener('click', () => {
       this.showQuickProfileModal = false;
       this.renderQuickProfileModal();
+    });
+
+    mount.querySelector('#quick-supabase-login-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = mount.querySelector('#quick-supa-email')?.value?.trim() || '';
+      const pass = mount.querySelector('#quick-supa-pass')?.value || '';
+      const fb = mount.querySelector('#quick-supa-feedback');
+      const btn = mount.querySelector('#btn-quick-supa-submit');
+      if (btn) btn.disabled = true;
+      if (fb) fb.textContent = '⏳ Autenticando contra Supabase Cloud...';
+
+      const res = await authService.signIn(email, pass);
+      const newState = authService.getState();
+
+      if (btn) btn.disabled = false;
+      if (!res.ok) {
+        if (fb) fb.innerHTML = `<span style="color:#ef4444;">❌ ${res.error}</span>`;
+        return;
+      }
+
+      if (!newState.isRealCloudSession) {
+        if (fb) {
+          fb.innerHTML = `<span style="color:#f59e0b;">⚠️ Este correo aún no existe en Supabase (Authentication ➔ Users) o la contraseña no coincide. Créalo en Supabase o ingresa el correo real que registraste allí.</span>`;
+        }
+        return;
+      }
+
+      if (fb) fb.innerHTML = `<span style="color:#22c55e;">✅ ¡Conectado a Supabase Cloud Real! Sincronizando reportes...</span>`;
+      await syncQueue.requeueLocalOnlyReportsForRealCloud();
+      await this.refreshGlobalStats();
+      this.updateTopbarStats();
+      await this.switchModule(this.activeModule);
+      this.renderQuickProfileModal();
+    });
+
+    mount.querySelector('#btn-quick-reupload-all')?.addEventListener('click', async () => {
+      const fb = mount.querySelector('#quick-supa-feedback');
+      if (fb) fb.textContent = '⏳ Subiendo reportes locales a Supabase Storage y Postgres...';
+      const res = await syncQueue.requeueLocalOnlyReportsForRealCloud();
+      if (fb) {
+        fb.innerHTML = res.ok
+          ? `<span style="color:#22c55e;">✅ ${res.reason}</span>`
+          : `<span style="color:#ef4444;">❌ ${res.reason}</span>`;
+      }
+      await this.refreshGlobalStats();
+      this.updateTopbarStats();
+      await this.switchModule(this.activeModule);
     });
 
     mount.querySelector('#quick-profile-backdrop')?.addEventListener('click', (e) => {
@@ -719,24 +820,32 @@ export class AppController {
     if (pendEl) {
       pendEl.textContent = String(this.stats.pendientes);
       pendEl.style.display =
-        this.stats.pendientes === 0 && !syncState.isSyncing ? 'none' : 'inline';
+        !authState.isRealCloudSession || (this.stats.pendientes === 0 && !syncState.isSyncing)
+          ? 'none'
+          : 'inline';
     }
     if (pendLabel) {
       pendLabel.textContent = syncState.isSyncing
         ? 'Subiendo...'
-        : this.stats.pendientes === 0
-          ? 'Al día en nube'
-          : 'Por subir:';
+        : !authState.isRealCloudSession
+          ? 'Solo Local (Conectar)'
+          : this.stats.pendientes === 0
+            ? 'Al día en nube'
+            : 'Por subir:';
     }
     if (pendPill) {
-      pendPill.className = `status-pill ${this.stats.pendientes === 0 ? 'online' : ''}`;
+      pendPill.className = `status-pill ${
+        authState.isRealCloudSession && this.stats.pendientes === 0 ? 'online' : ''
+      }`;
     }
     if (syncIcon) {
       syncIcon.textContent = syncState.isSyncing
         ? '🔄'
-        : this.stats.pendientes === 0
-          ? '☁️'
-          : '⏳';
+        : !authState.isRealCloudSession
+          ? '⚠️'
+          : this.stats.pendientes === 0
+            ? '☁️'
+            : '⏳';
     }
     if (storEl) {
       storEl.textContent = `${formatBytes(this.stats.indexedDbBytes)} (Cuota: ${this.stats.storageEst.usageMB} MB)`;
@@ -764,7 +873,7 @@ export class AppController {
     }
     if (authPill && authPillText) {
       authPill.className = `status-pill ${
-        authState.isAuthenticatedValid ? 'online' : authState.isExpired ? 'offline' : ''
+        authState.isRealCloudSession ? 'online' : 'offline'
       }`;
       authPillText.textContent = authState.badgeText;
     }
@@ -822,14 +931,23 @@ export class AppController {
     });
 
     this.mountEl.querySelector('#pill-pending')?.addEventListener('click', async () => {
+      if (!authService.getState().isRealCloudSession) {
+        this.showQuickProfileModal = true;
+        this.renderQuickProfileModal();
+        return;
+      }
       if (this.viewMode === 'operativo') {
-        // En modo supervisor, sincroniza directamente en segundo plano con 1 toque sin cambiar de pantalla
+        // En modo supervisor, sincroniza directamente (sube pendientes y baja novedades de Supabase Cloud)
         await syncQueue.processQueue({
           triggerSource: 'Sincronización rápida Supervisor',
           forceManual: true
         });
         await this.refreshGlobalStats();
         this.updateTopbarStats();
+        if (this.currentView && typeof this.currentView.reloadData === 'function') {
+          await this.currentView.reloadData();
+          this.currentView.render();
+        }
       } else {
         this.switchModule('m5');
       }

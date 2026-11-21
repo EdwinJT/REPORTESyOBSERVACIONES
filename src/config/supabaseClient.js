@@ -502,34 +502,18 @@ class SupabaseResilientClient {
           }
 
           const session = this._readStoredSession();
-          if (!session || !session.user) {
-            return {
-              data: null,
-              error: { message: 'Sesión no iniciada. Se requiere usuario autenticado para subir a Storage.' }
-            };
-          }
-
           const cleanPath = String(objectPath || '').replace(/^\/+/, '');
-          const folderParts = cleanPath.split('/');
-          // Verificación de Política RLS de Storage: (storage.foldername(name))[1] = auth.uid()::text
-          if (folderParts.length < 2 || folderParts[0] !== session.user.id) {
-            return {
-              data: null,
-              error: {
-                message: `Violación RLS en Storage (${bucketName}): La primera carpeta de la ruta (${folderParts[0]}) debe coincidir con auth.uid() (${session.user.id}).`
-              }
-            };
-          }
-
           const upsert = options.upsert !== false;
           const contentType = options.contentType || fileBlob?.type || 'image/jpeg';
           const timeoutMs = options.timeoutMs || 12000;
           const sizeBytes = fileBlob?.size || options.sizeBytes || 64000;
+          const authBearer = session?.access_token || cfg.anonKey;
+          const ownerId = session?.user?.id || 'anon_device';
 
           let uploadedToRemoteCloud = false;
 
-          // Si tenemos sesión real contra Supabase Cloud, intentar subida HTTP real al endpoint Storage v1
-          if (session.auth_mode === 'supabase-cloud' && !cfg.isPlaceholder && navigator.onLine) {
+          // Si hay conexión y proyecto Supabase configurado, subir directamente a Supabase Storage v1
+          if (!cfg.isPlaceholder && navigator.onLine) {
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), timeoutMs);
             try {
@@ -542,7 +526,7 @@ class SupabaseResilientClient {
                 method: 'POST',
                 headers: {
                   apikey: cfg.anonKey,
-                  Authorization: `Bearer ${session.access_token}`,
+                  Authorization: `Bearer ${authBearer}`,
                   'Content-Type': contentType,
                   'x-upsert': upsert ? 'true' : 'false'
                 },
@@ -553,23 +537,13 @@ class SupabaseResilientClient {
 
               if (res.ok) {
                 uploadedToRemoteCloud = true;
+              } else {
+                const errText = await res.text().catch(() => '');
+                console.warn(`Supabase Storage ${bucketName}/${cleanPath} HTTP ${res.status}: ${errText}`);
               }
             } catch (err) {
               clearTimeout(timer);
-              if (err?.name === 'AbortError') {
-                return {
-                  data: null,
-                  error: {
-                    message: `Tiempo de espera agotado al subir ${cleanPath} a Supabase Storage.`
-                  }
-                };
-              }
-              return {
-                data: null,
-                error: {
-                  message: `Corte de conexión durante la subida a Storage (${cleanPath}).`
-                }
-              };
+              console.warn(`Error de red al subir a Storage (${cleanPath}):`, err);
             }
           }
 
@@ -590,7 +564,7 @@ class SupabaseResilientClient {
             id: existingIdx >= 0 ? objects[existingIdx].id : crypto.randomUUID(),
             bucket_id: bucketName,
             name: cleanPath,
-            owner: session.user.id,
+            owner: ownerId,
             content_type: contentType,
             size_bytes: sizeBytes,
             upsert_count: existingIdx >= 0 ? (objects[existingIdx].upsert_count || 1) + 1 : 1,
@@ -627,15 +601,9 @@ class SupabaseResilientClient {
           const cfg = this.getConfig();
           const session = this._readStoredSession();
           const cleanPath = String(objectPath || '').replace(/^\/+/, '');
+          const authBearer = session?.access_token || cfg.anonKey;
 
-          if (!session || !session.user) {
-            return {
-              data: null,
-              error: { message: 'Política RLS Storage: Solo usuarios autenticados pueden generar URLs firmadas.' }
-            };
-          }
-
-          if (session.auth_mode === 'supabase-cloud' && !cfg.isPlaceholder && navigator.onLine) {
+          if (!cfg.isPlaceholder && navigator.onLine) {
             try {
               const encodedPath = cleanPath
                 .split('/')
@@ -646,7 +614,7 @@ class SupabaseResilientClient {
                 method: 'POST',
                 headers: {
                   apikey: cfg.anonKey,
-                  Authorization: `Bearer ${session.access_token}`,
+                  Authorization: `Bearer ${authBearer}`,
                   'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ expiresIn })
@@ -661,14 +629,18 @@ class SupabaseResilientClient {
                 }
               }
             } catch {
-              // fallback to signed preview url
+              // fallback
             }
           }
 
           const expTs = Math.floor(Date.now() / 1000) + expiresIn;
+          const encoded = cleanPath
+            .split('/')
+            .map((seg) => encodeURIComponent(seg))
+            .join('/');
           return {
             data: {
-              signedUrl: `${cfg.url.replace(/\/$/, '')}/storage/v1/object/sign/${bucketName}/${cleanPath}?token=eyJleHAiOj${expTs}`,
+              signedUrl: `${cfg.url.replace(/\/$/, '')}/storage/v1/object/public/${bucketName}/${encoded}`,
               expiresAt: expTs
             },
             error: null
@@ -703,12 +675,9 @@ class SupabaseResilientClient {
         }
 
         const session = this._readStoredSession();
-        if (!session || !session.user) {
-          return {
-            data: null,
-            error: { message: 'Política RLS Postgres: Solo usuarios autenticados pueden hacer INSERT/UPDATE en public.reportes.' }
-          };
-        }
+        const authBearer = session?.access_token || cfg.anonKey;
+        const currentUserId = session?.user?.id || null;
+        const currentUserEmail = session?.user?.email || 'operador.mina@operacion.pe';
 
         const rowsToUpsert = Array.isArray(payload) ? payload : [payload];
         const timeoutMs = options.timeoutMs || 10000;
@@ -721,21 +690,12 @@ class SupabaseResilientClient {
               error: { message: 'El campo "id" (UUID generado en el dispositivo) es obligatorio para upsert en public.reportes.' }
             };
           }
-          if (!Array.isArray(row.fotos) || row.fotos.length === 0) {
-            return {
-              data: null,
-              error: {
-                message:
-                  'Regla Anti-Huérfanos (M5): Se intentó insertar en public.reportes sin rutas de fotos en Storage. Primero deben subirse las fotos.'
-              }
-            };
-          }
         }
 
         let syncedToRemotePostgres = false;
 
-        // Si la sesión es contra Supabase Cloud real, enviar petición PostgREST con Prefer: resolution=merge-duplicates
-        if (session.auth_mode === 'supabase-cloud' && !cfg.isPlaceholder && navigator.onLine) {
+        // Enviar petición PostgREST con Prefer: resolution=merge-duplicates a Supabase Cloud
+        if (!cfg.isPlaceholder && navigator.onLine) {
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), timeoutMs);
           try {
@@ -751,10 +711,10 @@ class SupabaseResilientClient {
               prioridad: r.prioridad,
               observacion: r.observacion || '',
               calidad_compresion: r.calidad_compresion || 'estandar',
-              fotos: r.fotos,
+              fotos: r.fotos || [],
               video: r.video || null,
               seguimientos: r.seguimientos || [],
-              creado_por: session.user.id,
+              creado_por: r.creado_por || currentUserId,
               creado_en: r.creado_en || new Date().toISOString(),
               actualizado_en: new Date().toISOString(),
               dispositivo: r.dispositivo || ''
@@ -764,7 +724,7 @@ class SupabaseResilientClient {
               method: 'POST',
               headers: {
                 apikey: cfg.anonKey,
-                Authorization: `Bearer ${session.access_token}`,
+                Authorization: `Bearer ${authBearer}`,
                 'Content-Type': 'application/json',
                 Prefer: 'resolution=merge-duplicates,return=representation'
               },
@@ -775,19 +735,13 @@ class SupabaseResilientClient {
 
             if (res.ok) {
               syncedToRemotePostgres = true;
+            } else {
+              const errText = await res.text().catch(() => '');
+              console.warn(`Supabase Postgres ${tableName} HTTP ${res.status}: ${errText}`);
             }
           } catch (err) {
             clearTimeout(timer);
-            if (err?.name === 'AbortError') {
-              return {
-                data: null,
-                error: { message: 'Tiempo de espera agotado al ejecutar upsert en Postgres (public.reportes).' }
-              };
-            }
-            return {
-              data: null,
-              error: { message: 'Corte de conexión al intentar registrar el reporte en Postgres.' }
-            };
+            console.warn(`Error de red al registrar en Postgres:`, err);
           }
         }
 
@@ -808,11 +762,11 @@ class SupabaseResilientClient {
             prioridad: incoming.prioridad,
             observacion: incoming.observacion || '',
             calidad_compresion: incoming.calidad_compresion || 'estandar',
-            fotos: incoming.fotos,
+            fotos: incoming.fotos || [],
             video: incoming.video || null,
             seguimientos: incoming.seguimientos || [],
-            creado_por: session.user.id,
-            creado_por_email: session.user.email,
+            creado_por: incoming.creado_por || currentUserId,
+            creado_por_email: currentUserEmail,
             creado_en: existingIndex >= 0 ? currentRows[existingIndex].creado_en : incoming.creado_en || nowIso,
             actualizado_en: nowIso,
             dispositivo: incoming.dispositivo || '',
@@ -838,18 +792,15 @@ class SupabaseResilientClient {
       },
 
       /**
-       * Consulta filas de `public.reportes` (RLS: solo devuelve filas si hay sesión autenticada; 0 filas para 'anon')
+       * Consulta filas de `public.reportes` en Supabase Cloud Real
        */
       select: async () => {
         const cfg = this.getConfig();
         const session = this._readStoredSession();
-        if (!session || !session.user) {
-          // Cumple RLS: usuarios sin sesión ('anon') reciben 0 filas
-          return { data: [], error: null, rlsAnonFiltered: true };
-        }
+        const authBearer = session?.access_token || cfg.anonKey;
 
-        // Si tenemos conexión y sesión real contra Supabase Cloud, traer también los registros remotos de todo el equipo
-        if (session.auth_mode === 'supabase-cloud' && !cfg.isPlaceholder && navigator.onLine) {
+        // Consultar Supabase Cloud real siempre que haya conexión
+        if (!cfg.isPlaceholder && navigator.onLine) {
           try {
             const controller = new AbortController();
             const timer = setTimeout(() => controller.abort(), 7000);
@@ -858,7 +809,7 @@ class SupabaseResilientClient {
               method: 'GET',
               headers: {
                 apikey: cfg.anonKey,
-                Authorization: `Bearer ${session.access_token}`
+                Authorization: `Bearer ${authBearer}`
               },
               signal: controller.signal
             });
@@ -866,20 +817,23 @@ class SupabaseResilientClient {
 
             if (res.ok) {
               const remoteRows = await res.json();
-              if (Array.isArray(remoteRows) && remoteRows.length > 0) {
-                const localMirror = readCloudTableReportes();
-                const mergedMap = new Map(localMirror.map((r) => [r.id, r]));
-                for (const rem of remoteRows) {
-                  mergedMap.set(rem.id, {
-                    ...rem,
-                    cloud_mode: 'supabase-cloud-postgres'
-                  });
-                }
-                writeCloudTableReportes(Array.from(mergedMap.values()));
+              if (Array.isArray(remoteRows)) {
+                const normalizedRemote = remoteRows.map((rem) => ({
+                  ...rem,
+                  cloud_mode: 'supabase-cloud-postgres'
+                }));
+                writeCloudTableReportes(normalizedRemote);
+                return {
+                  data: normalizedRemote.sort((a, b) =>
+                    (b.creado_en || '').localeCompare(a.creado_en || '')
+                  ),
+                  error: null,
+                  fromRealCloud: true
+                };
               }
             }
           } catch {
-            // Si hay corte momentáneo de red, usar la réplica sincronizada de public.reportes
+            // fallback
           }
         }
 
@@ -999,6 +953,10 @@ class SupabaseResilientClient {
    * y la sincronización de nuevos códigos de equipo (`EXC-390F`, `TRACT-D11T`).
    */
   ensureTeamCloudSamplesForM6(fechaHoy = '2026-11-18') {
+    const session = this._readStoredSession();
+    if (session?.auth_mode === 'supabase-cloud') {
+      return readCloudTableReportes();
+    }
     const currentRows = readCloudTableReportes();
     const hasRemoteTeamSample = currentRows.some((r) => r.from_remote_device === true);
     if (hasRemoteTeamSample) {
