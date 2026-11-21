@@ -1079,7 +1079,7 @@ export class CapturaReporteView {
                 })
               </h2>
               <p class="brand-subtitle">
-                Orden operativo: <strong>1. Equipo → 2. Fecha (Inicial / Seg.) → 3. Vista Previa (Inicial / Seg.) → 4. Tipo / Prioridad → 5. Observación Principal y Comentarios Posteriores → 6. Estado</strong>.
+                Orden operativo: <strong>1. Equipo → 2. Fecha (Inicial / Seg.) → 3. Vista Previa (Inicial / Seg.) → 4. Observación Principal y Comentarios Posteriores → 5. Tipo / Prioridad → 6. Estado</strong>.
               </p>
             </div>
             ${
@@ -1100,8 +1100,8 @@ export class CapturaReporteView {
                   <th style="width: 13%;">1. Equipo</th>
                   <th style="width: 14%;">2. Fecha (Inicial / Seg.)</th>
                   <th style="width: 19%;">3. Vista Previa (Inicial / Seg.)</th>
-                  <th style="width: 13%;">4. Tipo / Prioridad</th>
-                  <th style="width: 29%;">5. Observación Principal y Comentarios Posteriores</th>
+                  <th style="width: 29%;">4. Observación Principal y Comentarios Posteriores</th>
+                  <th style="width: 13%;">5. Tipo / Prioridad</th>
                   <th style="width: 12%;">6. Estado</th>
                 </tr>
               </thead>
@@ -1220,22 +1220,7 @@ export class CapturaReporteView {
           </div>
         </td>
 
-        <!-- COL 4: TIPO / PRIORIDAD -->
-        <td rowspan="${totalRows}" class="report-span-cell">
-          <div style="display:flex; flex-direction:column; gap:0.45rem;">
-            <span class="badge ${prioClass}">
-              ${rep.prioridad === 'Alta' ? '🔴' : rep.prioridad === 'Media' ? '🟡' : '🔵'} Prioridad ${this.escapeHtml(rep.prioridad)}
-            </span>
-            <span class="badge" style="border:1px solid var(--border-strong);">
-              ${rep.tipo === 'Observación' ? '🔍' : '📄'} ${this.escapeHtml(rep.tipo)}
-            </span>
-            <span style="font-size:0.75rem; color:var(--text-muted);">
-              Calidad: ${rep.calidad_compresion === 'alta' ? 'Alta Nitidez (2048px)' : 'Estándar (1600px)'}
-            </span>
-          </div>
-        </td>
-
-        <!-- COL 5: OBSERVACIÓN PRINCIPAL -->
+        <!-- COL 4: OBSERVACIÓN PRINCIPAL -->
         <td class="report-slot-cell">
           <div class="slot-initial">
             <div>
@@ -1266,6 +1251,21 @@ export class CapturaReporteView {
                   : `<span class="badge badge-resolved">✅ Observación Levantada</span>`
               }
             </div>
+          </div>
+        </td>
+
+        <!-- COL 5: TIPO / PRIORIDAD -->
+        <td rowspan="${totalRows}" class="report-span-cell">
+          <div style="display:flex; flex-direction:column; gap:0.45rem;">
+            <span class="badge ${prioClass}">
+              ${rep.prioridad === 'Alta' ? '🔴' : rep.prioridad === 'Media' ? '🟡' : '🔵'} Prioridad ${this.escapeHtml(rep.prioridad)}
+            </span>
+            <span class="badge" style="border:1px solid var(--border-strong);">
+              ${rep.tipo === 'Observación' ? '🔍' : '📄'} ${this.escapeHtml(rep.tipo)}
+            </span>
+            <span style="font-size:0.75rem; color:var(--text-muted);">
+              Calidad: ${rep.calidad_compresion === 'alta' ? 'Alta Nitidez (2048px)' : 'Estándar (1600px)'}
+            </span>
           </div>
         </td>
 
@@ -1345,7 +1345,7 @@ export class CapturaReporteView {
           </div>
         </td>
 
-        <!-- COL 5: COMENTARIO POSTERIOR SEGUIMIENTO #${sIdx + 1} -->
+        <!-- COL 4: COMENTARIO POSTERIOR SEGUIMIENTO #${sIdx + 1} -->
         <td class="report-slot-cell">
           <div class="${slotClass}">
             <div>
