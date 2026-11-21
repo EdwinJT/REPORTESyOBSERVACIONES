@@ -1472,7 +1472,7 @@ export class CapturaReporteView {
             >
               ⏱️ ${this.escapeHtml(formatDiasTranscurridos(rep.fecha, seg.fecha))}
             </span>
-            <span class="elapsed-days-caption">desde inicio</span>
+            <span class="elapsed-days-caption">desde inicio de reporte</span>
           </div>
         </td>
 
