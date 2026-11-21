@@ -581,7 +581,7 @@ body {
 
 /* Tabla Principal con sub-filas reales (rowspan) para alineación exacta en celular y PC */
 .operational-table.report-main-table {
-  min-width: 1020px;
+  min-width: 820px;
 }
 
 .operational-table.report-main-table tbody tr {

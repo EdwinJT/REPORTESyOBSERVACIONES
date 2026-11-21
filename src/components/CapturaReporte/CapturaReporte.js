@@ -3,7 +3,7 @@
  * Implementa:
  * 1. Cuadro de Códigos de Equipos Creados (Selector + Filtro Rápido)
  * 2. Panel de Creación de Reporte (Cámara, Adjuntar, 1-5 fotos + 1 video opcional, Calidad compresión, + Agregar otra observación)
- * 3. Tabla Principal con Orden de Lectura Operativo (7 columnas con subsección de seguimiento ↳ alineada en Fecha, Vista Previa, Multimedia y Acciones, y Observación)
+ * 3. Tabla Principal con Orden de Lectura Operativo (6 columnas con subsección de seguimiento ↳ alineada en Fecha, Vista Previa y Observación)
  */
 
 import { localDb } from '../../db/localDb.js';
@@ -530,57 +530,36 @@ export class CapturaReporteView {
     }
   }
 
-  // Cambiar (🔄 Cambiar) una foto o video existente en la Tabla Principal (Inicial o Seguimiento)
-  async handleReplaceMediaInTable(reporteId, segIndex, mediaType, fotoIdx, file) {
-    if (!file) return;
-    const reporte = await localDb.reportes.get(reporteId);
-    if (!reporte) return;
+  // Descargar (⬇️ Descargar) foto o video desde el Visor Multimedia (blob local o URL firmada de Supabase Cloud)
+  async handleDownloadMedia(blob, filename, fallbackUrl = '') {
+    const safeName = filename || 'evidencia_equipo.jpg';
+    const triggerBlobDownload = (fileBlob) => {
+      const url = URL.createObjectURL(fileBlob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = safeName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    };
 
-    try {
-      const targetContainer =
-        segIndex === null ? reporte : (reporte.seguimientos || [])[segIndex];
-      if (!targetContainer) return;
-
-      if (mediaType === 'video') {
-        const val = validateVideoFile(file);
-        if (!val.valid) {
-          this.setBanner('error', val.error);
-          return;
-        }
-        targetContainer.video_local = val.videoLocal;
-      } else {
-        const compressed = await compressPhotoFile(file, reporte.calidad_compresion || 'estandar');
-        if (!targetContainer.fotos_locales || targetContainer.fotos_locales.length === 0) {
-          targetContainer.fotos_locales = [{ indice: 1, ...compressed }];
-        } else {
-          const idx = fotoIdx ?? 0;
-          targetContainer.fotos_locales[idx] = {
-            indice: idx + 1,
-            ...compressed
-          };
-        }
-      }
-
-      reporte.actualizado_en = new Date().toISOString();
-      await localDb.reportes.put(reporte);
-      await this.reloadData();
-      this.setBanner('success', `Archivo multimedia actualizado en el equipo ${reporte.codigo_equipo}.`);
-    } catch (err) {
-      this.setBanner('error', err.message || 'No se pudo cambiar el archivo.');
+    if (blob) {
+      triggerBlobDownload(blob);
+      return;
     }
-  }
 
-  // Descargar (⬇️ Descargar) foto o video de la Tabla Principal (Inicial o Seguimiento)
-  handleDownloadMedia(blob, filename) {
-    if (!blob) return;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename || 'evidencia_equipo.jpg';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    if (fallbackUrl) {
+      try {
+        const res = await fetch(fallbackUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const fetchedBlob = await res.blob();
+        triggerBlobDownload(fetchedBlob);
+      } catch (err) {
+        console.warn('[CapturaReporte] Descarga directa vía fetch falló, abriendo URL:', err);
+        window.open(fallbackUrl, '_blank', 'noopener,noreferrer');
+      }
+    }
   }
 
   // Guardar un nuevo seguimiento (↳) desde el modal rápido de la tabla
@@ -1100,7 +1079,7 @@ export class CapturaReporteView {
                 })
               </h2>
               <p class="brand-subtitle">
-                Orden operativo: <strong>1. Equipo → 2. Fecha (Inicial / Seg.) → 3. Vista Previa (Inicial / Seg.) → 4. Multimedia y Acciones (Inicial / Seg.) → 5. Tipo / Prioridad → 6. Observación Principal y Comentarios Posteriores → 7. Estado</strong>.
+                Orden operativo: <strong>1. Equipo → 2. Fecha (Inicial / Seg.) → 3. Vista Previa (Inicial / Seg.) → 4. Tipo / Prioridad → 5. Observación Principal y Comentarios Posteriores → 6. Estado</strong>.
               </p>
             </div>
             ${
@@ -1118,13 +1097,12 @@ export class CapturaReporteView {
             <table class="operational-table report-main-table">
               <thead>
                 <tr>
-                  <th style="width: 11%;">1. Equipo</th>
-                  <th style="width: 12%;">2. Fecha (Inicial / Seg.)</th>
-                  <th style="width: 15%;">3. Vista Previa (Inicial / Seg.)</th>
-                  <th style="width: 19%;">4. Multimedia y Acciones (Inicial / Seg.)</th>
-                  <th style="width: 10%;">5. Tipo / Prioridad</th>
-                  <th style="width: 23%;">6. Observación Principal y Comentarios Posteriores</th>
-                  <th style="width: 10%;">7. Estado</th>
+                  <th style="width: 13%;">1. Equipo</th>
+                  <th style="width: 14%;">2. Fecha (Inicial / Seg.)</th>
+                  <th style="width: 19%;">3. Vista Previa (Inicial / Seg.)</th>
+                  <th style="width: 13%;">4. Tipo / Prioridad</th>
+                  <th style="width: 29%;">5. Observación Principal y Comentarios Posteriores</th>
+                  <th style="width: 12%;">6. Estado</th>
                 </tr>
               </thead>
               <tbody>
@@ -1132,7 +1110,7 @@ export class CapturaReporteView {
                   reportesFiltrados.length === 0
                     ? `
                   <tr>
-                    <td colspan="7" style="text-align:center; padding: 2rem; color: var(--text-muted);">
+                    <td colspan="6" style="text-align:center; padding: 2rem; color: var(--text-muted);">
                       No hay reportes registrados para el filtro seleccionado. Usa el panel superior para registrar uno nuevo.
                     </td>
                   </tr>
@@ -1242,46 +1220,7 @@ export class CapturaReporteView {
           </div>
         </td>
 
-        <!-- COL 4: MULTIMEDIA Y ACCIONES (INICIAL) -->
-        <td class="report-slot-cell">
-          <div class="slot-initial">
-            <div style="font-size:0.76rem; font-weight:700; color:var(--text-muted);">
-              📌 Archivos Iniciales (${
-                (rep.fotos_locales || [])[0]
-                  ? formatBytes(
-                      (rep.fotos_locales || []).reduce((acc, f) => acc + (f.peso_bytes || 0), 0)
-                    )
-                  : '0 KB'
-              })
-            </div>
-            <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.35rem;">
-              <input
-                type="file"
-                id="replace-init-${this.escapeHtml(rep.id)}"
-                accept="image/*"
-                style="display:none"
-              />
-              <button
-                type="button"
-                class="btn-mine btn-sm-mine btn-secondary"
-                data-trigger-replace-init="${this.escapeHtml(rep.id)}"
-                title="Cambiar foto inicial"
-              >
-                🔄 Cambiar
-              </button>
-              <button
-                type="button"
-                class="btn-mine btn-sm-mine"
-                data-download-init="${this.escapeHtml(rep.id)}"
-                title="Descargar foto/video inicial"
-              >
-                ⬇️ Descargar
-              </button>
-            </div>
-          </div>
-        </td>
-
-        <!-- COL 5: TIPO / PRIORIDAD -->
+        <!-- COL 4: TIPO / PRIORIDAD -->
         <td rowspan="${totalRows}" class="report-span-cell">
           <div style="display:flex; flex-direction:column; gap:0.45rem;">
             <span class="badge ${prioClass}">
@@ -1296,7 +1235,7 @@ export class CapturaReporteView {
           </div>
         </td>
 
-        <!-- COL 6: OBSERVACIÓN PRINCIPAL -->
+        <!-- COL 5: OBSERVACIÓN PRINCIPAL -->
         <td class="report-slot-cell">
           <div class="slot-initial">
             <div>
@@ -1330,7 +1269,7 @@ export class CapturaReporteView {
           </div>
         </td>
 
-        <!-- COL 7: ESTADO -->
+        <!-- COL 6: ESTADO -->
         <td rowspan="${totalRows}" class="report-span-cell">
           <div style="display:flex; flex-direction:column; gap:0.5rem;">
             <span class="badge ${rep.sincronizado_en_nube_real ? 'badge-baja' : 'badge-pending'}">
@@ -1358,7 +1297,6 @@ export class CapturaReporteView {
         const labelColor = isResolvedSeg ? '#15803d' : 'var(--accent-amber)';
         const segRowClasses = `report-row-followup ${groupStripeClass}${isLastSeg ? ' report-row-last' : ''}`;
         const segFotos = seg.fotos_locales || [];
-        const pesoSeg = segFotos.reduce((acc, f) => acc + (f.peso_bytes || 0), 0);
 
         return `
       <tr class="${segRowClasses}" data-report-id="${this.escapeHtml(rep.id)}" data-seg-row="${sIdx}">
@@ -1407,43 +1345,7 @@ export class CapturaReporteView {
           </div>
         </td>
 
-        <!-- COL 4: MULTIMEDIA Y ACCIONES SEGUIMIENTO #${sIdx + 1} -->
-        <td class="report-slot-cell">
-          <div class="${slotClass}">
-            <div style="font-size:0.76rem; font-weight:700; color:${labelColor};">
-              ${
-                isResolvedSeg ? `↳ Archivos Cierre #${sIdx + 1}` : `↳ Archivos Seg. #${sIdx + 1}`
-              } (${formatBytes(pesoSeg)})
-            </div>
-            <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.35rem;">
-              <input
-                type="file"
-                id="replace-seg-${this.escapeHtml(rep.id)}-${sIdx}"
-                accept="image/*"
-                style="display:none"
-              />
-              <button
-                type="button"
-                class="btn-mine btn-sm-mine btn-secondary"
-                data-trigger-replace-seg="${this.escapeHtml(rep.id)}"
-                data-seg-idx="${sIdx}"
-              >
-                🔄 Cambiar
-              </button>
-              <button
-                type="button"
-                class="btn-mine btn-sm-mine"
-                data-download-seg="${this.escapeHtml(rep.id)}"
-                data-seg-idx="${sIdx}"
-                ${segFotos.length === 0 ? 'disabled' : ''}
-              >
-                ⬇️ Descargar
-              </button>
-            </div>
-          </div>
-        </td>
-
-        <!-- COL 6: COMENTARIO POSTERIOR SEGUIMIENTO #${sIdx + 1} -->
+        <!-- COL 5: COMENTARIO POSTERIOR SEGUIMIENTO #${sIdx + 1} -->
         <td class="report-slot-cell">
           <div class="${slotClass}">
             <div>
@@ -1478,9 +1380,14 @@ export class CapturaReporteView {
         <div class="modal-card">
           <div class="section-header">
             <h3 class="section-title">🔍 ${this.escapeHtml(title)}</h3>
-            <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-close-viewer">
-              ✕ Cerrar
-            </button>
+            <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+              <button type="button" class="btn-mine btn-sm-mine btn-primary" id="btn-download-viewer" ${!url ? 'disabled' : ''}>
+                ⬇️ Descargar
+              </button>
+              <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-close-viewer">
+                ✕ Cerrar
+              </button>
+            </div>
           </div>
           <div style="background:#0f172a; border-radius:10px; padding:0.5rem; overflow:hidden; text-align:center; max-height:72vh; display:flex; align-items:center; justify-content:center;">
             ${
@@ -1832,6 +1739,8 @@ export class CapturaReporteView {
         this.viewerModal = {
           title: `Vista Previa Foto #${idx + 1} — ${this.form.codigo_equipo}`,
           blob: foto.blob,
+          signedUrl: foto.signedUrl || '',
+          filename: `${this.form.codigo_equipo || 'equipo'}_preview_${idx + 1}.jpg`,
           isVideo: false,
           meta: `Resolución: ${foto.ancho}×${foto.alto} px | Peso comprimido: ${formatBytes(foto.peso_bytes)} (Original: ${formatBytes(foto.peso_original_bytes)})`
         };
@@ -1926,7 +1835,7 @@ export class CapturaReporteView {
       .querySelector('#btn-guardar-reporte')
       ?.addEventListener('click', () => this.handleSaveReport());
 
-    // Eventos en la Tabla Principal: Visor de fotos/videos, Cambiar (🔄), Descargar (⬇️) y Seguimiento (↳)
+    // Eventos en la Tabla Principal: Visor de fotos/videos, Descarga en visor y Seguimiento (↳)
     this.rootEl.querySelectorAll('[data-open-viewer]').forEach((img) => {
       img.addEventListener('click', () => {
         const repId = img.getAttribute('data-open-viewer');
@@ -1946,6 +1855,9 @@ export class CapturaReporteView {
           }`,
           blob: foto.blob || null,
           signedUrl: foto.signedUrl || '',
+          filename: `${rep.codigo_equipo}_${target.fecha || rep.fecha}_${
+            segAttr === 'null' ? 'inicial' : `seg_${Number(segAttr) + 1}`
+          }_foto_${fIdx + 1}.jpg`,
           isVideo: false,
           meta: `Fecha: ${target.fecha || rep.fecha} | Dimensiones: ${foto.ancho}×${foto.alto} px | ${foto.peso_bytes ? 'Peso: ' + formatBytes(foto.peso_bytes) : 'Imagen en Supabase Cloud'}`
         };
@@ -1960,71 +1872,13 @@ export class CapturaReporteView {
         if (!rep || !rep.video_local) return;
         this.viewerModal = {
           title: `Video Equipo ${rep.codigo_equipo}`,
-          blob: rep.video_local.blob,
+          blob: rep.video_local.blob || null,
+          signedUrl: rep.video_local.signedUrl || '',
+          filename: `${rep.codigo_equipo}_${rep.fecha}_video.mp4`,
           isVideo: true,
           meta: `Peso: ${formatBytes(rep.video_local.peso_bytes)}`
         };
         this.render();
-      });
-    });
-
-    // Botones 🔄 Cambiar foto inicial
-    this.rootEl.querySelectorAll('[data-trigger-replace-init]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const repId = btn.getAttribute('data-trigger-replace-init');
-        const input = this.rootEl.querySelector(`#replace-init-${repId}`);
-        if (!input) return;
-        input.onchange = (e) => {
-          if (e.target.files && e.target.files[0]) {
-            this.handleReplaceMediaInTable(repId, null, 'photo', 0, e.target.files[0]);
-          }
-        };
-        input.click();
-      });
-    });
-
-    // Botones ⬇️ Descargar foto inicial
-    this.rootEl.querySelectorAll('[data-download-init]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const repId = btn.getAttribute('data-download-init');
-        const rep = this.reportes.find((r) => r.id === repId);
-        const foto = (rep?.fotos_locales || [])[0];
-        if (foto && foto.blob) {
-          this.handleDownloadMedia(foto.blob, `${rep.codigo_equipo}_${rep.fecha}_inicial.jpg`);
-        }
-      });
-    });
-
-    // Botones 🔄 Cambiar foto seguimiento
-    this.rootEl.querySelectorAll('[data-trigger-replace-seg]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const repId = btn.getAttribute('data-trigger-replace-seg');
-        const sIdx = Number(btn.getAttribute('data-seg-idx'));
-        const input = this.rootEl.querySelector(`#replace-seg-${repId}-${sIdx}`);
-        if (!input) return;
-        input.onchange = (e) => {
-          if (e.target.files && e.target.files[0]) {
-            this.handleReplaceMediaInTable(repId, sIdx, 'photo', 0, e.target.files[0]);
-          }
-        };
-        input.click();
-      });
-    });
-
-    // Botones ⬇️ Descargar foto seguimiento
-    this.rootEl.querySelectorAll('[data-download-seg]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        const repId = btn.getAttribute('data-download-seg');
-        const sIdx = Number(btn.getAttribute('data-seg-idx'));
-        const rep = this.reportes.find((r) => r.id === repId);
-        const seg = (rep?.seguimientos || [])[sIdx];
-        const foto = (seg?.fotos_locales || [])[0];
-        if (foto && foto.blob) {
-          this.handleDownloadMedia(
-            foto.blob,
-            `${rep.codigo_equipo}_${seg.fecha}_seguimiento_${sIdx + 1}.jpg`
-          );
-        }
       });
     });
 
@@ -2063,6 +1917,15 @@ export class CapturaReporteView {
     });
 
     // Eventos de modales
+    this.rootEl.querySelector('#btn-download-viewer')?.addEventListener('click', () => {
+      if (!this.viewerModal) return;
+      this.handleDownloadMedia(
+        this.viewerModal.blob,
+        this.viewerModal.filename,
+        this.viewerModal.signedUrl
+      );
+    });
+
     this.rootEl.querySelector('#btn-close-viewer')?.addEventListener('click', () => {
       this.viewerModal = null;
       this.render();
