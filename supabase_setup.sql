@@ -25,8 +25,24 @@ CREATE TABLE IF NOT EXISTS public.reportes (
   dispositivo text DEFAULT ''
 );
 
--- Si la tabla ya existía, remover la restricción de clave foránea a auth.users
--- para que celulares y computadoras puedan sincronizar sin requerir confirmación por email
+-- Si la tabla ya existía con columnas incompletas, asegurar todas las columnas necesarias:
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS codigo_equipo text NOT NULL DEFAULT '';
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS fuera_catalogo boolean DEFAULT false;
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS fecha date;
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS hora_peru text DEFAULT '';
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS tipo text DEFAULT 'Reporte';
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS prioridad text DEFAULT 'Media';
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS observacion text DEFAULT '';
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS calidad_compresion text DEFAULT 'estandar';
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS fotos text[] NOT NULL DEFAULT '{}';
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS video text NULL;
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS seguimientos jsonb DEFAULT '[]'::jsonb;
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS creado_por uuid NULL;
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS creado_en timestamptz NOT NULL DEFAULT now();
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS actualizado_en timestamptz DEFAULT now();
+ALTER TABLE public.reportes ADD COLUMN IF NOT EXISTS dispositivo text DEFAULT '';
+
+-- Remover la restricción estricta de foreign key a auth.users para permitir sincronización fluida en campo
 ALTER TABLE public.reportes DROP CONSTRAINT IF EXISTS reportes_creado_por_fkey;
 ALTER TABLE public.reportes ALTER COLUMN creado_por DROP NOT NULL;
 
