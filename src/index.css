@@ -2675,15 +2675,45 @@ body.theme-night .reopen-label {
   }
 }
 
-/* Badge de días transcurridos debajo del código del equipo en Columna 1 */
+/* Subfila Columna 1: días transcurridos desde la fecha inicial alineados con cada seguimiento */
+.operational-table.report-main-table td.report-slot-cell > .elapsed-followup-slot {
+  height: 100%;
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.22rem;
+  padding: 0.45rem 0.4rem;
+  border-radius: 8px;
+  background: #FFF7EE;
+  border: 1.5px dashed var(--stracon-orange);
+  box-sizing: border-box;
+}
+
+.operational-table.report-main-table td.report-slot-cell > .elapsed-followup-slot.is-resolved {
+  background: #F0FDF4;
+  border-color: #16A34A;
+}
+
+body.theme-night .operational-table.report-main-table td.report-slot-cell > .elapsed-followup-slot {
+  background: #1B130B;
+  border-color: var(--stracon-orange);
+}
+
+body.theme-night .operational-table.report-main-table td.report-slot-cell > .elapsed-followup-slot.is-resolved {
+  background: #0A2717;
+  border-color: #22C55E;
+}
+
 .elapsed-days-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.3rem;
-  padding: 0.26rem 0.55rem;
+  padding: 0.28rem 0.6rem;
   border-radius: 6px;
-  font-size: 0.86rem;
+  font-size: 0.88rem;
   font-weight: 900;
   background: #E6F0FA;
   color: #002B5C;
@@ -2691,8 +2721,27 @@ body.theme-night .reopen-label {
   white-space: nowrap;
 }
 
+.elapsed-days-badge.is-resolved {
+  background: #DCFCE7;
+  color: #052E16;
+  border-color: #15803D;
+}
+
+.elapsed-days-caption {
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--text-muted);
+  text-align: center;
+}
+
 body.theme-night .elapsed-days-badge {
   background: #0F2D52;
   color: #BAE6FD;
   border-color: #60A5FA;
+}
+
+body.theme-night .elapsed-days-badge.is-resolved {
+  background: #064E3B;
+  color: #DCFCE7;
+  border-color: #4ADE80;
 }

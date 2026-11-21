@@ -5,7 +5,7 @@
  * abra en Modo Avión (Escenario P5) tras cerrarse completamente.
  */
 
-const CACHE_VERSION = 'v1.9.9-fecha-dias-topbar-codigo';
+const CACHE_VERSION = 'v1.9.10-dias-por-seguimiento';
 const APP_SHELL_CACHE = `mineria-pwa-appshell-${CACHE_VERSION}`;
 
 const PRECACHE_ASSETS = [

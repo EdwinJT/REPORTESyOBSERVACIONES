@@ -1283,7 +1283,7 @@ export class CapturaReporteView {
     const initialRowHtml = `
       <tr class="${initialRowClasses}" data-report-id="${this.escapeHtml(rep.id)}">
         <!-- COL 1: EQUIPO -->
-        <td rowspan="${totalRows}" class="report-span-cell">
+        <td class="report-slot-cell report-equip-cell">
           <div style="display:flex; flex-direction:column; gap:0.45rem;">
             <button
               type="button"
@@ -1293,12 +1293,6 @@ export class CapturaReporteView {
             >
               🚜 ${this.escapeHtml(rep.codigo_equipo)}
             </button>
-            <span
-              class="elapsed-days-badge"
-              title="Días transcurridos desde la fecha inicial (${this.escapeHtml(formatFechaDDMMYYYY(rep.fecha))})"
-            >
-              ⏱️ ${this.escapeHtml(formatDiasTranscurridos(rep.fecha))}
-            </span>
             <span style="font-size:0.75rem; color:var(--text-muted);">
               ID: ${this.escapeHtml(rep.id.slice(0, 8))}
             </span>
@@ -1469,6 +1463,19 @@ export class CapturaReporteView {
 
         return `
       <tr class="${segRowClasses}" data-report-id="${this.escapeHtml(rep.id)}" data-seg-row="${sIdx}">
+        <!-- COL 1: DÍAS DESDE FECHA INICIAL -->
+        <td class="report-slot-cell report-elapsed-cell">
+          <div class="elapsed-followup-slot ${isResolvedSeg ? 'is-resolved' : ''}">
+            <span
+              class="elapsed-days-badge ${isResolvedSeg ? 'is-resolved' : ''}"
+              title="Días transcurridos desde ${this.escapeHtml(formatFechaDDMMYYYY(rep.fecha))} hasta ${this.escapeHtml(formatFechaDDMMYYYY(seg.fecha))}"
+            >
+              ⏱️ ${this.escapeHtml(formatDiasTranscurridos(rep.fecha, seg.fecha))}
+            </span>
+            <span class="elapsed-days-caption">desde inicio</span>
+          </div>
+        </td>
+
         <!-- COL 2: FECHA SEGUIMIENTO #${sIdx + 1} -->
         <td class="report-slot-cell">
           <div class="${slotClass}">
