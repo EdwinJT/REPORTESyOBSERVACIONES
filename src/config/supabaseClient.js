@@ -340,6 +340,24 @@ class SupabaseResilientClient {
     }
   }
 
+  /**
+   * Devuelve un Bearer token criptográficamente válido para Supabase Cloud.
+   * Si la sesión local es simulada/resiliente (.supabase_m4_sig), usa cfg.anonKey
+   * para evitar el rechazo 401 PGRST301 ("JWT cryptographic operation failed").
+   */
+  _getValidBearerToken(session, cfg) {
+    if (
+      session &&
+      session.auth_mode === 'supabase-cloud' &&
+      typeof session.access_token === 'string' &&
+      session.access_token.length > 20 &&
+      !session.access_token.endsWith('.supabase_m4_sig')
+    ) {
+      return session.access_token;
+    }
+    return cfg.anonKey;
+  }
+
   auth = {
     getSession: async () => {
       const session = this._readStoredSession();
@@ -507,7 +525,7 @@ class SupabaseResilientClient {
           const contentType = options.contentType || fileBlob?.type || 'image/jpeg';
           const timeoutMs = options.timeoutMs || 12000;
           const sizeBytes = fileBlob?.size || options.sizeBytes || 64000;
-          const authBearer = session?.access_token || cfg.anonKey;
+          const authBearer = this._getValidBearerToken(session, cfg);
           const ownerId = session?.user?.id || 'anon_device';
 
           let uploadedToRemoteCloud = false;
@@ -601,7 +619,7 @@ class SupabaseResilientClient {
           const cfg = this.getConfig();
           const session = this._readStoredSession();
           const cleanPath = String(objectPath || '').replace(/^\/+/, '');
-          const authBearer = session?.access_token || cfg.anonKey;
+          const authBearer = this._getValidBearerToken(session, cfg);
 
           if (!cfg.isPlaceholder && navigator.onLine) {
             try {
@@ -675,7 +693,7 @@ class SupabaseResilientClient {
         }
 
         const session = this._readStoredSession();
-        const authBearer = session?.access_token || cfg.anonKey;
+        const authBearer = this._getValidBearerToken(session, cfg);
         const currentUserId = session?.user?.id || null;
         const currentUserEmail = session?.user?.email || 'operador.mina@operacion.pe';
 
@@ -802,7 +820,7 @@ class SupabaseResilientClient {
       select: async () => {
         const cfg = this.getConfig();
         const session = this._readStoredSession();
-        const authBearer = session?.access_token || cfg.anonKey;
+        const authBearer = this._getValidBearerToken(session, cfg);
 
         // Consultar Supabase Cloud real siempre que haya conexión
         if (!cfg.isPlaceholder && navigator.onLine) {

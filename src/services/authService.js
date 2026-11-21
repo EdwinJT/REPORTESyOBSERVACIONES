@@ -147,7 +147,7 @@ class AuthService {
     const isArchitectureAdmin =
       emailLower.includes('admin.arquitectura') || emailLower.includes('arquitectura');
     const isRealCloudSession = Boolean(
-      isAuthenticatedValid && this.session?.auth_mode === 'supabase-cloud'
+      isAuthenticatedValid && !cfg.isPlaceholder && cfg.security.valid
     );
 
     if (isAuthenticatedValid && !isRealCloudSession && !cfg.isPlaceholder) {

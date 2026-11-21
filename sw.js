@@ -5,7 +5,7 @@
  * abra en Modo Avión (Escenario P5) tras cerrarse completamente.
  */
 
-const CACHE_VERSION = 'v1.8.0-cloud-sync';
+const CACHE_VERSION = 'v1.9.0-cloud-sync-fix';
 const APP_SHELL_CACHE = `mineria-pwa-appshell-${CACHE_VERSION}`;
 
 const PRECACHE_ASSETS = [
@@ -55,7 +55,7 @@ self.addEventListener('install', (event) => {
       }
     })
   );
-  // registerType: 'prompt' -> No llamamos skipWaiting() automáticamente a menos que el usuario lo confirme
+  self.skipWaiting();
 });
 
 self.addEventListener('activate', (event) => {
@@ -130,20 +130,16 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Archivos del App Shell (JS, CSS, PNG, WebManifest) -> Cache First con respaldo en red
+  // Archivos del App Shell (JS, CSS, PNG, WebManifest) -> Network First con respaldo offline inmediato
   event.respondWith(
-    caches.match(request).then((cachedResponse) => {
-      const fetchPromise = fetch(request)
-        .then((networkResponse) => {
-          if (networkResponse && networkResponse.ok) {
-            const copy = networkResponse.clone();
-            caches.open(APP_SHELL_CACHE).then((cache) => cache.put(request, copy));
-          }
-          return networkResponse;
-        })
-        .catch(() => cachedResponse);
-
-      return cachedResponse || fetchPromise;
-    })
+    fetch(request)
+      .then((networkResponse) => {
+        if (networkResponse && networkResponse.ok) {
+          const copy = networkResponse.clone();
+          caches.open(APP_SHELL_CACHE).then((cache) => cache.put(request, copy));
+        }
+        return networkResponse;
+      })
+      .catch(() => caches.match(request))
   );
 });

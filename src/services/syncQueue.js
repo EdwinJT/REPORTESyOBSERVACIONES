@@ -210,6 +210,15 @@ class SyncQueueService {
       'Candado Mutex libre (🔓), 4 disparadores activos y orden estricto Fase 1 (Storage) -> Fase 2 (Postgres).'
     );
 
+    // Migración automática al iniciar: si hay reportes reales creados localmente que aún no subieron a Supabase Cloud Real, subirlos automáticamente
+    if (typeof window !== 'undefined') {
+      setTimeout(() => {
+        if (pwaManager.getState().isOnline && !this.isSyncing) {
+          this.requeueLocalOnlyReportsForRealCloud({ skipDemoSeeds: true }).catch(() => {});
+        }
+      }, 2000);
+    }
+
     return this.getState();
   }
 
@@ -614,8 +623,9 @@ class SyncQueueService {
           // ===================================================================
           this.currentPhase = 'PHASE_3_CONFIRM';
           const nowIso = new Date().toISOString();
+          const upsertedRow = dbRes.data?.[0];
           rep.estado = 'sincronizado';
-          rep.sincronizado_en_nube_real = Boolean(authState.isRealCloudSession);
+          rep.sincronizado_en_nube_real = upsertedRow?.cloud_mode === 'supabase-cloud-postgres';
           rep.fotos_rutas = uploadedPhotoPaths;
           rep.video_ruta = uploadedVideoPath;
           rep.ultimo_error = null;
@@ -631,7 +641,6 @@ class SyncQueueService {
           }
 
           syncedCount++;
-          const upsertedRow = dbRes.data?.[0];
           this.addLog(
             'success',
             `✅ Sincronizado: ${rep.codigo_equipo} (UUID ${rep.id.slice(0, 8)}...)`,
@@ -717,13 +726,14 @@ class SyncQueueService {
    * que aún no han sido confirmados en la nube real (`sincronizado_en_nube_real !== true`).
    * Ideal cuando el usuario guardó reportes en modo local antes de iniciar sesión en Supabase Cloud.
    */
-  async requeueLocalOnlyReportsForRealCloud() {
-    const authState = authService.getState();
-    if (!authState.isRealCloudSession) {
+  async requeueLocalOnlyReportsForRealCloud(options = {}) {
+    const skipDemoSeeds = options.skipDemoSeeds !== false;
+    const cfg = supabase.getConfig();
+    if (cfg.isPlaceholder || !cfg.security.valid) {
       return {
         ok: false,
         requeued: 0,
-        reason: 'Primero inicia sesión con tu cuenta real de Supabase (correo y contraseña creados en Supabase Auth).'
+        reason: 'Configura tu Project URL y Anon Key reales de Supabase primero.'
       };
     }
 
@@ -731,6 +741,9 @@ class SyncQueueService {
     let requeued = 0;
 
     for (const rep of allLocal) {
+      if (skipDemoSeeds && rep.dispositivo === 'PC / Demo Local') {
+        continue;
+      }
       if (!rep.sincronizado_en_nube_real && Array.isArray(rep.fotos_locales) && rep.fotos_locales.length > 0) {
         rep.estado = 'pendiente';
         rep.ultimo_error = null;
