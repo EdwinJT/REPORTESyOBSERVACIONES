@@ -87,7 +87,7 @@ textarea {
   font-family: var(--font-stracon);
 }
 
-/* Barra superior fija STRACON: Azul Marino institucional con franja Naranja industrial */
+/* Barra superior fija STRACON: Azul Marino institucional con franja Naranja industrial (Replegable) */
 .topbar {
   position: sticky;
   top: 0;
@@ -95,13 +95,74 @@ textarea {
   background: var(--stracon-navy);
   color: #FFFFFF;
   border-bottom: 4px solid var(--stracon-orange);
-  padding: 0.7rem 1.15rem;
+  padding: 0.6rem 1.15rem;
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.topbar.is-collapsed {
+  padding: 0.42rem 0.9rem;
+  gap: 0;
+}
+
+.topbar-main-row {
+  display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.65rem;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  flex-wrap: wrap;
+}
+
+.topbar-main-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-left: auto;
+}
+
+.topbar-quick-status {
+  display: none;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.28rem 0.65rem;
+  border-radius: 7px;
+  background: #0A2242;
+  border: 1.5px solid #4B79A8;
+  color: #FFFFFF;
+  font-size: 0.88rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.topbar.is-collapsed .topbar-quick-status {
+  display: inline-flex;
+}
+
+.topbar-collapsible-area {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.topbar.is-collapsed .topbar-collapsible-area {
+  display: none;
+}
+
+.btn-mine.btn-topbar-toggle {
+  background: #0A2242;
+  color: #FFFFFF;
+  border-color: var(--stracon-orange-bright);
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.btn-mine.btn-topbar-toggle:hover:not(:disabled) {
+  background: #133663;
+  color: #FFFFFF;
+  border-color: #FFFFFF;
 }
 
 body.theme-night .topbar {
@@ -112,17 +173,18 @@ body.theme-night .topbar {
 .brand-block {
   display: flex;
   align-items: center;
-  gap: 0.7rem;
+  gap: 0.65rem;
+  min-width: 0;
 }
 
 .brand-icon {
-  width: 44px;
-  height: 44px;
+  width: 42px;
+  height: 42px;
   border-radius: 8px;
   background: var(--stracon-orange-bright);
   color: #091526;
   font-weight: 900;
-  font-size: 1.4rem;
+  font-size: 1.35rem;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -130,12 +192,22 @@ body.theme-night .topbar {
   flex-shrink: 0;
 }
 
+.topbar.is-collapsed .brand-icon {
+  width: 34px;
+  height: 34px;
+  font-size: 1.1rem;
+}
+
 .brand-title {
   margin: 0;
-  font-size: 1.2rem;
+  font-size: 1.16rem;
   font-weight: 900;
   letter-spacing: 0.02em;
   color: #FFFFFF;
+}
+
+.topbar.is-collapsed .brand-title {
+  font-size: 0.98rem;
 }
 
 .brand-subtitle {
@@ -2597,4 +2669,30 @@ body.theme-night .reopen-label {
     min-height: 44px;
     font-size: 1rem;
   }
+
+  .topbar.is-collapsed #badge-active-view-mode {
+    display: none;
+  }
+}
+
+/* Badge de días transcurridos debajo del código del equipo en Columna 1 */
+.elapsed-days-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  padding: 0.26rem 0.55rem;
+  border-radius: 6px;
+  font-size: 0.86rem;
+  font-weight: 900;
+  background: #E6F0FA;
+  color: #002B5C;
+  border: 1.5px solid var(--stracon-blue);
+  white-space: nowrap;
+}
+
+body.theme-night .elapsed-days-badge {
+  background: #0F2D52;
+  color: #BAE6FD;
+  border-color: #60A5FA;
 }

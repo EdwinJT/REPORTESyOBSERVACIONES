@@ -28,7 +28,7 @@ import {
   exportFilteredReportsToExcel,
   buildExcelExportPayload
 } from '../../services/excelExporter.js';
-import { getFechaHoyPeru, getHoraActualPeru } from '../../utils/datePeru.js';
+import { getFechaHoyPeru, getHoraActualPeru, formatFechaDDMMYYYY } from '../../utils/datePeru.js';
 import { normalizeEquipmentCode } from '../../utils/codeNormalizer.js';
 import { formatBytes } from '../../db/storageManager.js';
 
@@ -885,10 +885,10 @@ export class HistorialModuleView {
                   </select>
                 </div>
 
-                <!-- Rango de fechas (Desde / Hasta) en zona America/Lima -->
+                <!-- Rango de fechas (Desde / Hasta) -->
                 <div class="form-grid-2">
                   <div class="form-group">
-                    <label class="form-label" for="m6-filter-desde">3. Fecha Desde (Lima):</label>
+                    <label class="form-label" for="m6-filter-desde">3. Fecha Desde:</label>
                     <input
                       type="date"
                       id="m6-filter-desde"
@@ -897,7 +897,7 @@ export class HistorialModuleView {
                     />
                   </div>
                   <div class="form-group">
-                    <label class="form-label" for="m6-filter-hasta">4. Fecha Hasta (Lima):</label>
+                    <label class="form-label" for="m6-filter-hasta">4. Fecha Hasta:</label>
                     <input
                       type="date"
                       id="m6-filter-hasta"
@@ -910,7 +910,7 @@ export class HistorialModuleView {
                 <!-- Atajos rápidos de fecha -->
                 <div style="display:flex; flex-wrap:wrap; gap:0.4rem;">
                   <button type="button" class="btn-mine btn-sm-mine btn-secondary" id="btn-m6-date-today" style="min-height:34px;">
-                    📅 Solo Hoy (${getFechaHoyPeru()})
+                    📅 Solo Hoy (${formatFechaDDMMYYYY(getFechaHoyPeru())})
                   </button>
                   <button type="button" class="btn-mine btn-sm-mine btn-secondary" id="btn-m6-date-all" style="min-height:34px;">
                     🗓️ Todas las Fechas
@@ -1116,7 +1116,7 @@ export class HistorialModuleView {
           <thead>
             <tr>
               <th>1. Equipo</th>
-              <th>2. Fecha Lima (Inicial / Seg.)</th>
+              <th>2. Fecha (Inicial / Seg.)</th>
               <th>3. Origen / Estado Sync</th>
               <th>4. Tipo / Prioridad</th>
               <th>5. Observación Principal y Seguimientos (↳)</th>
@@ -1168,8 +1168,8 @@ export class HistorialModuleView {
                   <td>
                     <div class="cell-initial-block">
                       <span class="pin-label">📌 Inicial:</span>
-                      <strong>${rep.fecha}</strong>
-                      <div style="font-size:0.76rem; color:#475569;">🕒 ${rep.hora_peru || '--:--'} (Lima)</div>
+                      <strong>${formatFechaDDMMYYYY(rep.fecha)}</strong>
+                      <div style="font-size:0.76rem; color:#475569;">🕒 ${rep.hora_peru || '--:--'}</div>
                     </div>
                     ${
                       seguimientos.length > 0
@@ -1180,7 +1180,7 @@ export class HistorialModuleView {
                             (seg, sIdx) => `
                           <div style="font-size:0.79rem; margin-top:0.2rem;">
                             <span class="followup-arrow">↳ Seg. #${sIdx + 1}:</span>
-                            <strong>${seg.fecha}</strong>
+                            <strong>${formatFechaDDMMYYYY(seg.fecha)}</strong>
                           </div>
                         `
                           )
@@ -1304,7 +1304,7 @@ export class HistorialModuleView {
               </div>
 
               <div class="m6-mobile-card-meta">
-                <span>📅 <strong>${rep.fecha}</strong> (${rep.hora_peru || '--:--'} Lima)</span>
+                <span>📅 <strong>${formatFechaDDMMYYYY(rep.fecha)}</strong> (${rep.hora_peru || '--:--'})</span>
                 <span>👤 ${rep.creado_por_email || 'supervisor.mina@operacion.pe'}</span>
                 <span>📱 ${rep.dispositivo || 'PWA Mina'}</span>
               </div>
@@ -1319,7 +1319,7 @@ export class HistorialModuleView {
                     ${seguimientos
                       .map(
                         (s) =>
-                          `<div><strong>↳ ${s.fecha} (${s.estado_seguimiento}):</strong> ${s.comentario}</div>`
+                          `<div><strong>↳ ${formatFechaDDMMYYYY(s.fecha)} (${s.estado_seguimiento}):</strong> ${s.comentario}</div>`
                       )
                       .join('')}
                   </div>
@@ -1380,7 +1380,7 @@ export class HistorialModuleView {
                   <th>ID UUID</th>
                   <th>Código Equipo</th>
                   <th>Origen</th>
-                  <th>Fecha Lima</th>
+                  <th>Fecha</th>
                   <th>Tipo / Prioridad</th>
                   <th>Observación Principal</th>
                   <th>Cant. Fotos</th>
@@ -1395,7 +1395,7 @@ export class HistorialModuleView {
                     <td style="font-family:monospace; font-size:0.77rem;">${r.id.slice(0, 12)}...</td>
                     <td><span class="equipo-tag">${r.codigo_equipo}</span></td>
                     <td style="font-size:0.8rem; font-weight:700;">${r.origen_unificado}</td>
-                    <td><strong>${r.fecha}</strong> (${r.hora_peru})</td>
+                    <td><strong>${formatFechaDDMMYYYY(r.fecha)}</strong> (${r.hora_peru})</td>
                     <td>${r.tipo} / <strong>${r.prioridad}</strong></td>
                     <td style="font-size:0.83rem;">${r.observacion}</td>
                     <td style="text-align:center; font-weight:900;">${r.cant_fotos}</td>
@@ -1431,7 +1431,7 @@ export class HistorialModuleView {
                 <span style="color:#fbbf24; font-weight:900;">Detalle del Reporte y Carga Diferida (createSignedUrl)</span>
               </div>
               <div style="font-size:0.8rem; color:#cbd5e1; margin-top:0.2rem;">
-                UUID: <code>${rep.id}</code> • Fecha Lima: <strong>${rep.fecha} ${rep.hora_peru || ''}</strong> • Registrado por: <strong>${rep.creado_por_email || 'supervisor.mina@operacion.pe'}</strong>
+                UUID: <code>${rep.id}</code> • Fecha: <strong>${formatFechaDDMMYYYY(rep.fecha)} ${rep.hora_peru || ''}</strong> • Registrado por: <strong>${rep.creado_por_email || 'supervisor.mina@operacion.pe'}</strong>
               </div>
             </div>
             <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-m6-close-modal">
@@ -1443,7 +1443,7 @@ export class HistorialModuleView {
             <!-- Metadatos del reporte -->
             <div class="m6-modal-meta-grid">
               <div><strong>Equipo:</strong> ${rep.codigo_equipo} ${rep.es_nuevo_codigo || rep.fuera_catalogo ? '(Creado en campo)' : ''}</div>
-              <div><strong>Fecha (America/Lima):</strong> ${rep.fecha} (${rep.hora_peru || '--:--'})</div>
+              <div><strong>Fecha:</strong> ${formatFechaDDMMYYYY(rep.fecha)} (${rep.hora_peru || '--:--'})</div>
               <div><strong>Tipo / Prioridad:</strong> ${rep.tipo} — Prioridad ${rep.prioridad}</div>
               <div><strong>Dispositivo Emisor:</strong> ${rep.dispositivo || 'PWA Mina'}</div>
             </div>
@@ -1460,7 +1460,7 @@ export class HistorialModuleView {
                     .map(
                       (s, i) => `
                     <div style="margin-top:0.3rem; font-size:0.86rem;">
-                      <strong>#${i + 1} (${s.fecha} — ${s.estado_seguimiento}):</strong> ${s.comentario}
+                      <strong>#${i + 1} (${formatFechaDDMMYYYY(s.fecha)} — ${s.estado_seguimiento}):</strong> ${s.comentario}
                     </div>
                   `
                     )

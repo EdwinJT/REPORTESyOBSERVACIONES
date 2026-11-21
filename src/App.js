@@ -23,7 +23,7 @@ import {
 } from './db/storageManager.js';
 import { localDb } from './db/localDb.js';
 import { supabase } from './config/supabaseClient.js';
-import { getFechaHoyPeru } from './utils/datePeru.js';
+import { getFechaHoyPeru, formatFechaDDMMYYYY } from './utils/datePeru.js';
 import { pwaManager, APP_SHELL_FILES } from './services/pwaManager.js';
 import { authService, DEMO_MINE_ACCOUNTS } from './services/authService.js';
 import { syncQueue } from './services/syncQueue.js';
@@ -35,6 +35,7 @@ import { SyncModuleView } from './components/SyncStatus/SyncStatus.js';
 import { HistorialModuleView } from './components/Historial/Historial.js';
 
 const VIEW_MODE_STORAGE_KEY = 'mineria_pwa_ui_view_mode_v1';
+const SPECIAL_USER_CODES = ['2026', 'STRACON2026', 'Mina2026!Admin'];
 
 export class AppController {
   constructor(mountEl) {
@@ -45,6 +46,12 @@ export class AppController {
     this.activeModule = 'm1'; // En modo operativo inicia directo en M1 (Registrar Reporte)
     this.m1TableTab = 'activas'; // 'activas' | 'levantadas'
     this.showQuickProfileModal = false;
+    this.showSpecialUserCodeModal = false;
+    this.specialUserCodeError = '';
+    this.pendingSpecialTargetModule = null;
+    this.isTopbarCollapsed = typeof window !== 'undefined' ? window.innerWidth <= 980 : false;
+    this.userToggledTopbar = false;
+    this._resizeHandler = null;
     this.pwaBanner = null;
     this.currentView = null;
     this.stats = {
@@ -91,8 +98,7 @@ export class AppController {
     const bannerMount = this.mountEl.querySelector('#pwa-global-banner-mount');
     this.pwaBanner = new PwaGlobalBanner(bannerMount, {
       onOpenPwaModule: () => {
-        this.setViewMode('ingenieria');
-        this.switchModule('m3');
+        this.requestSpecialUserAccess({ targetModule: 'm3' });
       }
     });
     this.pwaBanner.init();
@@ -131,136 +137,158 @@ export class AppController {
     const authState = authService.getState();
     const syncState = syncQueue.getState();
     const isOperativo = this.viewMode === 'operativo';
+    const fechaHoyFormatted = formatFechaDDMMYYYY(getFechaHoyPeru());
 
     this.mountEl.innerHTML = `
-      <header class="topbar">
-        <div class="brand-block">
-          <div class="brand-icon">⛏️</div>
-          <div>
-            <div style="display:flex; align-items:center; gap:0.55rem; flex-wrap:wrap;">
-              <h1 class="brand-title">REPORTES Y OBSERVACIONES DE EQUIPOS MINEROS</h1>
-              <span
-                id="badge-active-view-mode"
-                style="font-size:0.73rem; font-weight:800; padding:0.18rem 0.55rem; border-radius:999px; ${
-                  isOperativo
-                    ? 'background:#22c55e; color:#052e16;'
-                    : 'background:#f59e0b; color:#0f172a;'
-                }"
-              >
-                ${
-                  isOperativo
-                    ? '👷 VISTA SUPERVISOR OPERATIVO (2 PESTAÑAS)'
-                    : '🛠️ USUARIO ESPECIAL: ARQUITECTURA M1–M6'
-                }
-              </span>
+      <header class="topbar ${this.isTopbarCollapsed ? 'is-collapsed' : ''}" id="main-topbar">
+        <div class="topbar-main-row">
+          <div class="brand-block">
+            <div class="brand-icon">⛏️</div>
+            <div>
+              <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                <h1 class="brand-title">REPORTES Y OBSERVACIONES DE EQUIPOS MINEROS</h1>
+                <span
+                  id="badge-active-view-mode"
+                  style="font-size:0.73rem; font-weight:800; padding:0.18rem 0.55rem; border-radius:999px; ${
+                    isOperativo
+                      ? 'background:#22c55e; color:#052e16;'
+                      : 'background:#f59e0b; color:#0f172a;'
+                  }"
+                >
+                  ${
+                    isOperativo
+                      ? '👷 VISTA SUPERVISOR OPERATIVO'
+                      : '🛠️ USUARIO ESPECIAL: ARQUITECTURA M1–M6'
+                  }
+                </span>
+              </div>
             </div>
-            <p class="brand-subtitle" id="topbar-module-subtitle">
-              Operación en Campo: Captura rápida con guantes, funcionamiento sin señal y sincronización automática
-            </p>
+          </div>
+
+          <div class="topbar-main-actions">
+            <div class="topbar-quick-status" title="Resumen rápido de fecha y red">
+              <span>📅 ${fechaHoyFormatted}</span>
+              <span id="topbar-quick-net-dot">${pwaState.isOnline ? '🟢' : '🔴'}</span>
+            </div>
+            <button
+              type="button"
+              class="btn-mine btn-sm-mine btn-topbar-toggle"
+              id="btn-toggle-topbar"
+              aria-expanded="${!this.isTopbarCollapsed}"
+              title="Desplegar o replegar barra superior"
+            >
+              ${this.isTopbarCollapsed ? '⚙️ Opciones ▾' : '🔼 Replegar'}
+            </button>
           </div>
         </div>
 
-        <div class="topbar-controls">
-          <!-- Botón directo para alternar entre Vista Limpia Supervisor (2 pestañas) y Usuario Especial (6 módulos M1..M6) -->
-          <button
-            type="button"
-            class="btn-mine btn-sm-mine ${isOperativo ? 'btn-secondary' : 'btn-amber'}"
-            id="btn-toggle-view-mode"
-            title="Alternar entre la vista simplificada del Supervisor (2 pestañas) y el Usuario Especial de Arquitectura (6 módulos M1 a M6)"
-            style="min-height:34px; font-weight:800;"
-          >
-            ${
-              isOperativo
-                ? '🛠️ Usuario Especial: Ver M1–M6'
-                : '👷 Volver a Vista Supervisor (2 Pestañas)'
-            }
-          </button>
+        <div class="topbar-collapsible-area">
+          <p class="brand-subtitle" id="topbar-module-subtitle">
+            Operación en Campo: Captura rápida con guantes, funcionamiento sin señal y sincronización automática
+          </p>
 
-          <!-- Control de Zoom rápido en barra superior -->
-          <div class="status-pill" title="Ajustar zoom de la pantalla para ver más contenido">
-            <span>🔍 Zoom:</span>
-            <button type="button" class="btn-mine btn-sm-mine" id="btn-zoom-out" style="min-height:28px; padding:0.15rem 0.5rem;">−</button>
-            <strong id="label-zoom" style="color:#fbbf24;">${Math.round(this.zoomLevel * 100)}%</strong>
-            <button type="button" class="btn-mine btn-sm-mine" id="btn-zoom-in" style="min-height:28px; padding:0.15rem 0.5rem;">+</button>
+          <div class="topbar-controls">
+            <!-- Botón directo para alternar entre Vista Limpia Supervisor y Usuario Especial (solicita código) -->
+            <button
+              type="button"
+              class="btn-mine btn-sm-mine ${isOperativo ? 'btn-secondary' : 'btn-amber'}"
+              id="btn-toggle-view-mode"
+              title="Alternar entre Vista Supervisor y Usuario Especial (requiere código)"
+              style="min-height:36px; font-weight:800;"
+            >
+              ${
+                isOperativo
+                  ? '🛠️ Usuario Especial: Ver M1–M6'
+                  : '👷 Volver a Vista Supervisor'
+              }
+            </button>
+
+            <!-- Control de Zoom rápido en barra superior -->
+            <div class="status-pill" title="Ajustar zoom de la pantalla para ver más contenido">
+              <span>🔍 Zoom:</span>
+              <button type="button" class="btn-mine btn-sm-mine" id="btn-zoom-out" style="min-height:28px; padding:0.15rem 0.5rem;">−</button>
+              <strong id="label-zoom" style="color:#fbbf24;">${Math.round(this.zoomLevel * 100)}%</strong>
+              <button type="button" class="btn-mine btn-sm-mine" id="btn-zoom-in" style="min-height:28px; padding:0.15rem 0.5rem;">+</button>
+            </div>
+
+            <div class="status-pill" id="pill-peru-date" title="Fecha operativa actual">
+              📅 <strong style="color:#fbbf24;">${fechaHoyFormatted}</strong>
+            </div>
+
+            <div
+              class="status-pill ${pwaState.isOnline ? 'online' : 'offline'}"
+              id="pill-network"
+              style="cursor:pointer;"
+              title="Estado de red en tiempo real"
+            >
+              <span>${
+                pwaState.simulatedAirplaneMode
+                  ? '✈️ Modo Avión (P5)'
+                  : pwaState.isOnline
+                    ? '🟢 En línea'
+                    : '🔴 Sin conexión'
+              }</span>
+            </div>
+
+            <div
+              class="status-pill ${authState.isRealCloudSession && this.stats.pendientes === 0 ? 'online' : ''}"
+              id="pill-pending"
+              style="cursor:pointer;"
+              title="${
+                !authState.isRealCloudSession
+                  ? 'Modo Local: Toca para iniciar sesión en Supabase Cloud y sincronizar entre dispositivos'
+                  : isOperativo
+                    ? 'Toca para sincronizar ahora con Supabase Cloud'
+                    : 'Abrir Cola de Sincronización (Módulo 5)'
+              }"
+            >
+              <span id="stat-sync-icon">${
+                syncState.isSyncing
+                  ? '🔄'
+                  : !authState.isRealCloudSession
+                    ? '⚠️'
+                    : this.stats.pendientes === 0
+                      ? '☁️'
+                      : '⏳'
+              }</span>
+              <span id="stat-pending-label">${
+                syncState.isSyncing
+                  ? 'Subiendo...'
+                  : !authState.isRealCloudSession
+                    ? 'Solo Local (Conectar)'
+                    : this.stats.pendientes === 0
+                      ? 'Al día en nube'
+                      : 'Por subir:'
+              }</span>
+              <strong id="stat-pendientes" style="color:#fbbf24; ${
+                !authState.isRealCloudSession || (this.stats.pendientes === 0 && !syncState.isSyncing)
+                  ? 'display:none;'
+                  : ''
+              }">${this.stats.pendientes}</strong>
+            </div>
+
+            <div
+              class="status-pill ${authState.isRealCloudSession ? 'online' : 'offline'}"
+              id="pill-auth"
+              style="cursor:pointer;"
+              title="Iniciar sesión real en Supabase Cloud o cambiar de perfil"
+            >
+              <span id="stat-auth-pill">${authState.badgeText}</span>
+            </div>
+
+            <div
+              class="status-pill tech-only-inline"
+              id="pill-storage"
+              style="cursor:pointer;"
+              title="Almacenamiento local IndexedDB y cuota del dispositivo (M2)"
+            >
+              💾 Local: <strong id="stat-storage" style="color:#38bdf8;">${formatBytes(this.stats.indexedDbBytes)}</strong>
+            </div>
+
+            <button type="button" class="btn-mine btn-sm-mine btn-primary" id="btn-toggle-theme">
+              ${this.isNightTheme ? '☀️ Modo Día' : '🌙 Modo Noche'}
+            </button>
           </div>
-
-          <div class="status-pill" id="pill-peru-date" title="Fecha calculada en zona horaria America/Lima (UTC-5)">
-            📅 Lima: <strong style="color:#fbbf24;">${getFechaHoyPeru()}</strong>
-          </div>
-
-          <div
-            class="status-pill ${pwaState.isOnline ? 'online' : 'offline'}"
-            id="pill-network"
-            style="cursor:pointer;"
-            title="Estado de red en tiempo real"
-          >
-            <span>${
-              pwaState.simulatedAirplaneMode
-                ? '✈️ Modo Avión (P5)'
-                : pwaState.isOnline
-                  ? '🟢 En línea'
-                  : '🔴 Sin conexión'
-            }</span>
-          </div>
-
-          <div
-            class="status-pill ${authState.isRealCloudSession && this.stats.pendientes === 0 ? 'online' : ''}"
-            id="pill-pending"
-            style="cursor:pointer;"
-            title="${
-              !authState.isRealCloudSession
-                ? 'Modo Local: Toca para iniciar sesión en Supabase Cloud y sincronizar entre dispositivos'
-                : isOperativo
-                  ? 'Toca para sincronizar ahora con Supabase Cloud'
-                  : 'Abrir Cola de Sincronización (Módulo 5)'
-            }"
-          >
-            <span id="stat-sync-icon">${
-              syncState.isSyncing
-                ? '🔄'
-                : !authState.isRealCloudSession
-                  ? '⚠️'
-                  : this.stats.pendientes === 0
-                    ? '☁️'
-                    : '⏳'
-            }</span>
-            <span id="stat-pending-label">${
-              syncState.isSyncing
-                ? 'Subiendo...'
-                : !authState.isRealCloudSession
-                  ? 'Solo Local (Conectar)'
-                  : this.stats.pendientes === 0
-                    ? 'Al día en nube'
-                    : 'Por subir:'
-            }</span>
-            <strong id="stat-pendientes" style="color:#fbbf24; ${
-              !authState.isRealCloudSession || (this.stats.pendientes === 0 && !syncState.isSyncing)
-                ? 'display:none;'
-                : ''
-            }">${this.stats.pendientes}</strong>
-          </div>
-
-          <div
-            class="status-pill ${authState.isRealCloudSession ? 'online' : 'offline'}"
-            id="pill-auth"
-            style="cursor:pointer;"
-            title="Iniciar sesión real en Supabase Cloud o cambiar de perfil"
-          >
-            <span id="stat-auth-pill">${authState.badgeText}</span>
-          </div>
-
-          <div
-            class="status-pill tech-only-inline"
-            id="pill-storage"
-            style="cursor:pointer;"
-            title="Almacenamiento local IndexedDB y cuota del dispositivo (M2)"
-          >
-            💾 Local: <strong id="stat-storage" style="color:#38bdf8;">${formatBytes(this.stats.indexedDbBytes)}</strong>
-          </div>
-
-          <button type="button" class="btn-mine btn-sm-mine btn-primary" id="btn-toggle-theme">
-            🌙 Modo Noche
-          </button>
         </div>
       </header>
 
@@ -365,6 +393,7 @@ export class AppController {
 
       <main id="module-view-container"></main>
       <div id="quick-profile-modal-mount"></div>
+      <div id="special-user-code-mount"></div>
     `;
   }
 
@@ -387,7 +416,7 @@ export class AppController {
       badgeMode.style.background = isOperativo ? '#22c55e' : '#f59e0b';
       badgeMode.style.color = isOperativo ? '#052e16' : '#0f172a';
       badgeMode.textContent = isOperativo
-        ? '👷 VISTA SUPERVISOR OPERATIVO (2 PESTAÑAS)'
+        ? '👷 VISTA SUPERVISOR OPERATIVO'
         : '🛠️ USUARIO ESPECIAL: ARQUITECTURA M1–M6';
     }
 
@@ -395,7 +424,7 @@ export class AppController {
       btnToggleMode.className = `btn-mine btn-sm-mine ${isOperativo ? 'btn-secondary' : 'btn-amber'}`;
       btnToggleMode.textContent = isOperativo
         ? '🛠️ Usuario Especial: Ver M1–M6'
-        : '👷 Volver a Vista Supervisor (2 Pestañas)';
+        : '👷 Volver a Vista Supervisor';
     }
 
     if (tabTitleM1) {
@@ -412,6 +441,137 @@ export class AppController {
       tabTitleM6.textContent = isOperativo
         ? '📊 2. Historial de Mina y Exportar Excel'
         : '📊 M6 — Historial Unificado y Excel';
+    }
+  }
+
+  requestSpecialUserAccess({ targetModule = null } = {}) {
+    if (this.viewMode === 'ingenieria') {
+      if (targetModule) this.switchModule(targetModule);
+      return;
+    }
+    this.pendingSpecialTargetModule = targetModule;
+    this.specialUserCodeError = '';
+    this.showSpecialUserCodeModal = true;
+    this.renderSpecialUserCodeModal();
+  }
+
+  renderSpecialUserCodeModal() {
+    const mount = this.mountEl.querySelector('#special-user-code-mount');
+    if (!mount) return;
+    if (!this.showSpecialUserCodeModal) {
+      mount.innerHTML = '';
+      return;
+    }
+
+    mount.innerHTML = `
+      <div class="modal-backdrop" id="special-user-code-backdrop" role="dialog" aria-modal="true" aria-labelledby="special-code-title">
+        <div class="modal-card" style="max-width: 480px;">
+          <div class="section-header">
+            <h3 class="section-title" id="special-code-title">🔐 Acceso a Usuario Especial (M1–M6)</h3>
+            <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-close-special-code">
+              ✕ Cancelar
+            </button>
+          </div>
+
+          <form id="special-user-code-form" style="display:flex; flex-direction:column; gap:0.85rem;">
+            <div class="field-group">
+              <label class="field-label" for="input-special-user-code">
+                Ingresa el código de autorización para habilitar los módulos avanzados:
+              </label>
+              <input
+                type="password"
+                id="input-special-user-code"
+                class="input-mine ${this.specialUserCodeError ? 'field-error-input' : ''}"
+                placeholder="Código de autorización..."
+                autocomplete="off"
+                required
+              />
+              ${
+                this.specialUserCodeError
+                  ? `<div id="special-user-code-error" class="inline-field-error" role="alert">⚠️ ${this.specialUserCodeError}</div>`
+                  : ''
+              }
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; gap:0.65rem;">
+              <button type="button" class="btn-mine btn-secondary" id="btn-cancel-special-code">
+                Cancelar
+              </button>
+              <button type="submit" class="btn-mine btn-primary" id="btn-submit-special-code">
+                🔓 Validar Código e Ingresar
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    `;
+
+    const inputEl = mount.querySelector('#input-special-user-code');
+    inputEl?.focus();
+
+    const closeModal = () => {
+      this.showSpecialUserCodeModal = false;
+      this.specialUserCodeError = '';
+      this.pendingSpecialTargetModule = null;
+      this.renderSpecialUserCodeModal();
+    };
+
+    mount.querySelector('#btn-close-special-code')?.addEventListener('click', closeModal);
+    mount.querySelector('#btn-cancel-special-code')?.addEventListener('click', closeModal);
+    mount.querySelector('#special-user-code-backdrop')?.addEventListener('click', (e) => {
+      if (e.target.id === 'special-user-code-backdrop') closeModal();
+    });
+
+    inputEl?.addEventListener('input', () => {
+      if (this.specialUserCodeError) {
+        this.specialUserCodeError = '';
+        inputEl.classList.remove('field-error-input');
+        mount.querySelector('#special-user-code-error')?.remove();
+      }
+    });
+
+    mount.querySelector('#special-user-code-form')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const entered = (inputEl?.value || '').trim();
+      const isValid = SPECIAL_USER_CODES.some((c) => c === entered);
+      if (!isValid) {
+        this.specialUserCodeError = 'Código incorrecto. No se otorgó acceso a Usuario Especial.';
+        this.renderSpecialUserCodeModal();
+        return;
+      }
+
+      const targetMod = this.pendingSpecialTargetModule;
+      this.showSpecialUserCodeModal = false;
+      this.specialUserCodeError = '';
+      this.pendingSpecialTargetModule = null;
+      this.renderSpecialUserCodeModal();
+
+      await this.setViewMode('ingenieria', {
+        switchUserEmail: 'admin.arquitectura@operacion.pe',
+        switchUserPass: 'Mina2026!Admin',
+        targetModule: targetMod
+      });
+    });
+  }
+
+  toggleTopbarCollapsed(forceValue = null, { isManual = true } = {}) {
+    if (isManual) {
+      this.userToggledTopbar = true;
+    }
+    this.isTopbarCollapsed =
+      typeof forceValue === 'boolean' ? forceValue : !this.isTopbarCollapsed;
+    this.updateTopbarCollapsedUI();
+  }
+
+  updateTopbarCollapsedUI() {
+    const header = this.mountEl.querySelector('#main-topbar');
+    const toggleBtn = this.mountEl.querySelector('#btn-toggle-topbar');
+    if (header) {
+      header.classList.toggle('is-collapsed', this.isTopbarCollapsed);
+    }
+    if (toggleBtn) {
+      toggleBtn.setAttribute('aria-expanded', String(!this.isTopbarCollapsed));
+      toggleBtn.textContent = this.isTopbarCollapsed ? '⚙️ Opciones ▾' : '🔼 Replegar';
     }
   }
 
@@ -515,7 +675,7 @@ export class AppController {
                 <div>
                   <strong style="font-size:1.05rem;">🛠️ 2. Usuario Especial: Administrador de Arquitectura (M1 a M6)</strong>
                   <div style="font-size:0.84rem; opacity:0.88; margin-top:0.2rem;">
-                    Usuario: <code>admin.arquitectura@operacion.pe</code> (Clave: <code>Mina2026!Admin</code>)<br/>
+                    Usuario restringido (Requiere código de autorización).<br/>
                     Desbloquea las <strong>6 pestañas completas (M1, M2, M3, M4, M5 y M6)</strong> y todos los laboratorios de validación (Escenarios P1 a P10) para revisar cómo construimos cada módulo.
                   </div>
                 </div>
@@ -632,13 +792,10 @@ export class AppController {
       });
     });
 
-    mount.querySelector('#btn-activate-admin-mode')?.addEventListener('click', async () => {
+    mount.querySelector('#btn-activate-admin-mode')?.addEventListener('click', () => {
       this.showQuickProfileModal = false;
       this.renderQuickProfileModal();
-      await this.setViewMode('ingenieria', {
-        switchUserEmail: 'admin.arquitectura@operacion.pe',
-        switchUserPass: 'Mina2026!Admin'
-      });
+      this.requestSpecialUserAccess();
     });
 
     mount.querySelectorAll('[data-quick-login-email]').forEach((btn) => {
@@ -655,10 +812,10 @@ export class AppController {
       });
     });
 
-    mount.querySelector('#btn-open-full-m4-auth')?.addEventListener('click', async () => {
+    mount.querySelector('#btn-open-full-m4-auth')?.addEventListener('click', () => {
       this.showQuickProfileModal = false;
       this.renderQuickProfileModal();
-      await this.setViewMode('ingenieria', { targetModule: 'm4' });
+      this.requestSpecialUserAccess({ targetModule: 'm4' });
     });
   }
 
@@ -958,12 +1115,26 @@ export class AppController {
   }
 
   bindGlobalEvents() {
+    this.mountEl.querySelector('#btn-toggle-topbar')?.addEventListener('click', () => {
+      this.toggleTopbarCollapsed(null, { isManual: true });
+    });
+
+    if (typeof window !== 'undefined') {
+      if (this._resizeHandler) {
+        window.removeEventListener('resize', this._resizeHandler);
+      }
+      this._resizeHandler = () => {
+        if (!this.userToggledTopbar) {
+          this.isTopbarCollapsed = window.innerWidth <= 980;
+          this.updateTopbarCollapsedUI();
+        }
+      };
+      window.addEventListener('resize', this._resizeHandler);
+    }
+
     this.mountEl.querySelector('#btn-toggle-view-mode')?.addEventListener('click', async () => {
       if (this.viewMode === 'operativo') {
-        await this.setViewMode('ingenieria', {
-          switchUserEmail: 'admin.arquitectura@operacion.pe',
-          switchUserPass: 'Mina2026!Admin'
-        });
+        this.requestSpecialUserAccess();
       } else {
         await this.setViewMode('operativo', {
           switchUserEmail: 'supervisor.mina@operacion.pe',
@@ -1081,6 +1252,10 @@ export class AppController {
 
   updateNetworkPill(pwaState = pwaManager.getState()) {
     const pill = this.mountEl.querySelector('#pill-network');
+    const quickDot = this.mountEl.querySelector('#topbar-quick-net-dot');
+    if (quickDot) {
+      quickDot.textContent = pwaState.isOnline ? '🟢' : '🔴';
+    }
     if (!pill) return;
     pill.className = `status-pill ${pwaState.isOnline ? 'online' : 'offline'}`;
     pill.innerHTML = `<span>${

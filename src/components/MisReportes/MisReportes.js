@@ -21,7 +21,7 @@ import {
   generateHeavyCameraPhotoForP3,
   COMPRESSION_PROFILES
 } from '../../services/imageCompressor.js';
-import { getFechaHoyPeru, getHoraActualPeru } from '../../utils/datePeru.js';
+import { getFechaHoyPeru, getHoraActualPeru, formatFechaDDMMYYYY } from '../../utils/datePeru.js';
 
 const ESTADOS_REPORTE = [
   { id: 'pendiente', label: '⏳ PENDIENTE', badgeClass: 'badge-estado-pendiente', desc: 'Guardado en IndexedDB local, esperando sincronización' },
@@ -665,7 +665,7 @@ export class MisReportesView {
           <div style="display:flex; flex-wrap:wrap; align-items:center; gap:0.55rem;">
             <span class="m2-equipo-tag">🚜 ${this.escapeHtml(rep.codigo_equipo)}</span>
             <span class="badge" style="background:#e2e8f0; color:#0f172a; border:2px solid #475569;">
-              📅 ${this.escapeHtml(rep.fecha)} (America/Lima)
+              📅 ${this.escapeHtml(formatFechaDDMMYYYY(rep.fecha))}
             </span>
             <span class="badge ${prioClass}">
               ${rep.prioridad === 'Alta' ? '🔴' : rep.prioridad === 'Media' ? '🟡' : '🔵'} ${this.escapeHtml(rep.prioridad)}
@@ -725,7 +725,7 @@ export class MisReportesView {
                   .map(
                     (seg, sIdx) => `
                   <div style="background:#fef3c7; border-left:4px solid #d97706; padding:0.35rem 0.6rem; border-radius:6px; font-size:0.85rem; color:#451a03;">
-                    <strong>↳ Seg. #${sIdx + 1} (${this.escapeHtml(seg.fecha)}) — ${this.escapeHtml(seg.estado_seguimiento)}:</strong>
+                    <strong>↳ Seg. #${sIdx + 1} (${this.escapeHtml(formatFechaDDMMYYYY(seg.fecha))}) — ${this.escapeHtml(seg.estado_seguimiento)}:</strong>
                     ${this.escapeHtml(seg.comentario)}
                   </div>
                 `
@@ -886,7 +886,7 @@ export class MisReportesView {
                         Resolución: ${sf.ancho || '—'}×${sf.alto || '—'} px
                       </div>
                       <div style="font-size:0.74rem; color:#451a03;">
-                        Fecha: ${this.escapeHtml(seg.fecha)}
+                        Fecha: ${this.escapeHtml(formatFechaDDMMYYYY(seg.fecha))}
                       </div>
                       <div style="display:flex; gap:0.35rem; margin-top:0.35rem;">
                         <button

@@ -9,7 +9,13 @@
 import { localDb } from '../../db/localDb.js';
 import { supabase } from '../../config/supabaseClient.js';
 import { formatBytes, getStorageUsageEstimate } from '../../db/storageManager.js';
-import { getFechaHoyPeru, getHoraActualPeru, esFechaValida } from '../../utils/datePeru.js';
+import {
+  getFechaHoyPeru,
+  getHoraActualPeru,
+  esFechaValida,
+  formatFechaDDMMYYYY,
+  formatDiasTranscurridos
+} from '../../utils/datePeru.js';
 import { normalizeEquipmentCode } from '../../utils/codeNormalizer.js';
 import {
   getAllEquipments,
@@ -871,11 +877,11 @@ export class CapturaReporteView {
               </div>
             </div>
 
-            <!-- Fecha en America/Lima + Tipo + Prioridad -->
+            <!-- Fecha + Tipo + Prioridad -->
             <div class="field-group">
               <label class="field-label" for="input-fecha-peru">
-                <span>Fecha Local Perú (America/Lima) *</span>
-                <span style="font-size:0.78rem; color:var(--accent-blue);">Hora Lima: ${getHoraActualPeru()}</span>
+                <span>Fecha *</span>
+                <span id="form-fecha-display" style="font-size:0.86rem; color:var(--accent-blue);">${this.escapeHtml(formatFechaDDMMYYYY(this.form.fecha))}</span>
               </label>
               <input
                 type="date"
@@ -1079,7 +1085,7 @@ export class CapturaReporteView {
                       </div>
 
                       <div class="field-group">
-                        <label class="field-label">Fecha de este punto (America/Lima)</label>
+                        <label class="field-label">Fecha de este punto</label>
                         <input type="date" class="input-mine" data-extra-fecha="${idx}" value="${this.escapeHtml(extra.fecha)}" />
                       </div>
 
@@ -1287,6 +1293,12 @@ export class CapturaReporteView {
             >
               🚜 ${this.escapeHtml(rep.codigo_equipo)}
             </button>
+            <span
+              class="elapsed-days-badge"
+              title="Días transcurridos desde la fecha inicial (${this.escapeHtml(formatFechaDDMMYYYY(rep.fecha))})"
+            >
+              ⏱️ ${this.escapeHtml(formatDiasTranscurridos(rep.fecha))}
+            </span>
             <span style="font-size:0.75rem; color:var(--text-muted);">
               ID: ${this.escapeHtml(rep.id.slice(0, 8))}
             </span>
@@ -1303,9 +1315,8 @@ export class CapturaReporteView {
           <div class="slot-initial">
             <div>
               <div style="font-size:0.76rem; color:var(--text-muted); font-weight:700;">📌 Fecha Inicial</div>
-              <div style="font-size:1rem; font-weight:800; margin-top:0.2rem; white-space:nowrap;">${this.escapeHtml(rep.fecha)}</div>
+              <div style="font-size:1rem; font-weight:800; margin-top:0.2rem; white-space:nowrap;">${this.escapeHtml(formatFechaDDMMYYYY(rep.fecha))}</div>
             </div>
-            <div style="font-size:0.74rem; color:var(--accent-blue);">Zona: America/Lima</div>
           </div>
         </td>
 
@@ -1465,7 +1476,7 @@ export class CapturaReporteView {
               <div style="font-size:0.76rem; color:${labelColor}; font-weight:800;">${
                 isResolvedSeg ? `↳ ✅ Levantada (#${sIdx + 1})` : `↳ Seguimiento #${sIdx + 1}`
               }</div>
-              <div style="font-size:0.98rem; font-weight:800; margin-top:0.2rem; white-space:nowrap;">${this.escapeHtml(seg.fecha)}</div>
+              <div style="font-size:0.98rem; font-weight:800; margin-top:0.2rem; white-space:nowrap;">${this.escapeHtml(formatFechaDDMMYYYY(seg.fecha))}</div>
             </div>
             <div style="font-size:0.74rem; color:var(--text-muted);">${isResolvedSeg ? 'Fecha Cierre' : 'Fecha Seg.'}</div>
           </div>
@@ -1629,7 +1640,7 @@ export class CapturaReporteView {
           <div class="form-grid">
             <div class="field-group">
               <label class="field-label">${
-                isResolveMode ? 'Fecha de Levantamiento (America/Lima)' : 'Fecha del Seguimiento (America/Lima)'
+                isResolveMode ? 'Fecha de Levantamiento' : 'Fecha del Seguimiento'
               }</label>
               <input type="date" id="modal-seg-fecha" class="input-mine" value="${this.escapeHtml(m.fecha)}" />
             </div>
@@ -1815,6 +1826,10 @@ export class CapturaReporteView {
     if (inputFecha) {
       inputFecha.addEventListener('change', (e) => {
         this.form.fecha = e.target.value;
+        const fechaDisp = this.rootEl.querySelector('#form-fecha-display');
+        if (fechaDisp) {
+          fechaDisp.textContent = formatFechaDDMMYYYY(e.target.value);
+        }
       });
     }
 
@@ -2017,7 +2032,7 @@ export class CapturaReporteView {
             segAttr === 'null' ? 'inicial' : `seg_${Number(segAttr) + 1}`
           }_foto_${fIdx + 1}.jpg`,
           isVideo: false,
-          meta: `Fecha: ${target.fecha || rep.fecha} | Dimensiones: ${foto.ancho}×${foto.alto} px | ${foto.peso_bytes ? 'Peso: ' + formatBytes(foto.peso_bytes) : 'Imagen en Supabase Cloud'}`
+          meta: `Fecha: ${formatFechaDDMMYYYY(target.fecha || rep.fecha)} | Dimensiones: ${foto.ancho}×${foto.alto} px | ${foto.peso_bytes ? 'Peso: ' + formatBytes(foto.peso_bytes) : 'Imagen en Supabase Cloud'}`
         };
         this.render();
       });
