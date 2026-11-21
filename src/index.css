@@ -483,6 +483,7 @@ body {
 .table-responsive {
   width: 100%;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .operational-table {
@@ -555,6 +556,53 @@ body {
   flex-direction: column;
   justify-content: space-between;
   box-shadow: 0 1px 3px rgba(217, 119, 6, 0.12);
+}
+
+/* Tabla Principal con sub-filas reales (rowspan) para alineación exacta en celular y PC */
+.operational-table.report-main-table {
+  min-width: 1020px;
+}
+
+.operational-table.report-main-table tbody tr {
+  border-bottom: none;
+  background: transparent;
+}
+
+.operational-table.report-main-table tbody tr.report-group-odd {
+  background: #ffffff;
+}
+
+.operational-table.report-main-table tbody tr.report-group-even {
+  background: #f8fafc;
+}
+
+.operational-table.report-main-table td.report-span-cell {
+  border-bottom: 3px solid #334155;
+  vertical-align: top;
+}
+
+.operational-table.report-main-table td.report-slot-cell {
+  vertical-align: top;
+  height: 1px;
+}
+
+.operational-table.report-main-table tbody tr:not(.report-row-last) td.report-slot-cell {
+  border-bottom: 1px dashed #cbd5e1;
+  padding-bottom: 0.45rem;
+}
+
+.operational-table.report-main-table tbody tr.report-row-followup td.report-slot-cell {
+  padding-top: 0.45rem;
+}
+
+.operational-table.report-main-table tbody tr.report-row-last td.report-slot-cell {
+  border-bottom: 3px solid #334155;
+}
+
+.operational-table.report-main-table td.report-slot-cell > .slot-initial,
+.operational-table.report-main-table td.report-slot-cell > .slot-followup {
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .preview-strip {

@@ -1009,7 +1009,7 @@ export class CapturaReporteView {
           </div>
 
           <div class="table-responsive">
-            <table class="operational-table">
+            <table class="operational-table report-main-table">
               <thead>
                 <tr>
                   <th style="width: 11%;">1. Equipo</th>
@@ -1031,7 +1031,7 @@ export class CapturaReporteView {
                     </td>
                   </tr>
                 `
-                    : reportesFiltrados.map((rep) => this.renderTableRow(rep)).join('')
+                    : reportesFiltrados.map((rep, repIdx) => this.renderTableRow(rep, repIdx)).join('')
                 }
               </tbody>
             </table>
@@ -1046,8 +1046,11 @@ export class CapturaReporteView {
     this.attachEvents();
   }
 
-  renderTableRow(rep) {
+  renderTableRow(rep, repIdx = 0) {
     const seguimientos = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
+    const totalRows = 1 + seguimientos.length;
+    const groupStripeClass = repIdx % 2 === 1 ? 'report-group-even' : 'report-group-odd';
+    const initialRowClasses = `report-row-initial ${groupStripeClass}${seguimientos.length === 0 ? ' report-row-last' : ''}`;
     const prioClass =
       rep.prioridad === 'Alta'
         ? 'badge-alta'
@@ -1055,10 +1058,10 @@ export class CapturaReporteView {
         ? 'badge-media'
         : 'badge-baja';
 
-    return `
-      <tr>
+    const initialRowHtml = `
+      <tr class="${initialRowClasses}" data-report-id="${this.escapeHtml(rep.id)}">
         <!-- COL 1: EQUIPO -->
-        <td>
+        <td rowspan="${totalRows}" class="report-span-cell">
           <div style="display:flex; flex-direction:column; gap:0.45rem;">
             <button
               type="button"
@@ -1079,196 +1082,99 @@ export class CapturaReporteView {
           </div>
         </td>
 
-        <!-- COL 2: FECHA (INICIAL / SEG.) -->
-        <td>
-          <div class="aligned-stack">
-            <div class="slot-initial">
-              <div>
-                <div style="font-size:0.76rem; color:var(--text-muted); font-weight:700;">📌 Fecha Inicial</div>
-                <div style="font-size:1rem; font-weight:800; margin-top:0.2rem;">${this.escapeHtml(rep.fecha)}</div>
-              </div>
-              <div style="font-size:0.74rem; color:var(--accent-blue);">Zona: America/Lima</div>
+        <!-- COL 2: FECHA (INICIAL) -->
+        <td class="report-slot-cell">
+          <div class="slot-initial">
+            <div>
+              <div style="font-size:0.76rem; color:var(--text-muted); font-weight:700;">📌 Fecha Inicial</div>
+              <div style="font-size:1rem; font-weight:800; margin-top:0.2rem; white-space:nowrap;">${this.escapeHtml(rep.fecha)}</div>
             </div>
-
-            ${seguimientos
-              .map(
-                (seg, sIdx) => `
-              <div class="slot-followup">
-                <div>
-                  <div style="font-size:0.76rem; color:var(--accent-amber); font-weight:800;">↳ Seguimiento #${sIdx + 1}</div>
-                  <div style="font-size:0.98rem; font-weight:800; margin-top:0.2rem;">${this.escapeHtml(seg.fecha)}</div>
-                </div>
-                <div style="font-size:0.74rem; color:var(--text-muted);">Fecha Seg.</div>
-              </div>
-            `
-              )
-              .join('')}
+            <div style="font-size:0.74rem; color:var(--accent-blue);">Zona: America/Lima</div>
           </div>
         </td>
 
-        <!-- COL 3: VISTA PREVIA (INICIAL / SEG.) -->
-        <td>
-          <div class="aligned-stack">
-            <div class="slot-initial">
-              <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700; margin-bottom:0.25rem;">
-                📌 Inicial (${(rep.fotos_locales || []).length} foto(s)${rep.video_local ? ' + 1 video' : ''})
-              </div>
-              <div class="preview-strip">
-                ${(rep.fotos_locales || [])
-                  .map((f, fIdx) => {
-                    const url = f.blob ? this.createObjectUrl(f.blob) : (f.signedUrl || '');
-                    return `
-                    <img
-                      src="${url}"
-                      alt="Miniatura inicial ${fIdx + 1}"
-                      class="table-thumb"
-                      data-open-viewer="${this.escapeHtml(rep.id)}"
-                      data-viewer-seg="null"
-                      data-viewer-idx="${fIdx}"
-                      title="Toca para inspeccionar placa / detalle (${f.ancho}x${f.alto}px)"
-                    />
-                  `;
-                  })
-                  .join('')}
-                ${
-                  rep.video_local
-                    ? `
-                  <button
-                    type="button"
-                    class="btn-mine btn-sm-mine"
-                    data-open-video="${this.escapeHtml(rep.id)}"
+        <!-- COL 3: VISTA PREVIA (INICIAL) -->
+        <td class="report-slot-cell">
+          <div class="slot-initial">
+            <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700; margin-bottom:0.25rem;">
+              📌 Inicial (${(rep.fotos_locales || []).length} foto(s)${rep.video_local ? ' + 1 video' : ''})
+            </div>
+            <div class="preview-strip">
+              ${(rep.fotos_locales || [])
+                .map((f, fIdx) => {
+                  const url = f.blob ? this.createObjectUrl(f.blob) : (f.signedUrl || '');
+                  return `
+                  <img
+                    src="${url}"
+                    alt="Miniatura inicial ${fIdx + 1}"
+                    class="table-thumb"
+                    data-open-viewer="${this.escapeHtml(rep.id)}"
                     data-viewer-seg="null"
-                  >
-                    🎥 Ver Video
-                  </button>
-                `
-                    : ''
-                }
-              </div>
-            </div>
-
-            ${seguimientos
-              .map((seg, sIdx) => {
-                const segFotos = seg.fotos_locales || [];
-                return `
-                <div class="slot-followup">
-                  <div style="font-size:0.75rem; color:var(--accent-amber); font-weight:700; margin-bottom:0.25rem;">
-                    ↳ Vista Seg. #${sIdx + 1} (${segFotos.length} foto(s)${seg.video_local ? ' + 1 video' : ''})
-                  </div>
-                  <div class="preview-strip">
-                    ${
-                      segFotos.length === 0 && !seg.video_local
-                        ? `<span style="font-size:0.78rem; color:var(--text-muted);">Sin foto adjunta</span>`
-                        : segFotos
-                            .map((f, fIdx) => {
-                              const url = f.blob ? this.createObjectUrl(f.blob) : (f.signedUrl || '');
-                              return `
-                              <img
-                                src="${url}"
-                                alt="Miniatura seg ${fIdx + 1}"
-                                class="table-thumb"
-                                data-open-viewer="${this.escapeHtml(rep.id)}"
-                                data-viewer-seg="${sIdx}"
-                                data-viewer-idx="${fIdx}"
-                              />
-                            `;
-                            })
-                            .join('')
-                    }
-                  </div>
-                </div>
-              `;
-              })
-              .join('')}
-          </div>
-        </td>
-
-        <!-- COL 4: MULTIMEDIA Y ACCIONES (INICIAL / SEG.) -->
-        <td>
-          <div class="aligned-stack">
-            <!-- Acciones Multimedia Inicial -->
-            <div class="slot-initial">
-              <div style="font-size:0.76rem; font-weight:700; color:var(--text-muted);">
-                📌 Archivos Iniciales (${
-                  (rep.fotos_locales || [])[0]
-                    ? formatBytes(
-                        (rep.fotos_locales || []).reduce((acc, f) => acc + (f.peso_bytes || 0), 0)
-                      )
-                    : '0 KB'
+                    data-viewer-idx="${fIdx}"
+                    title="Toca para inspeccionar placa / detalle (${f.ancho}x${f.alto}px)"
+                  />
+                `;
                 })
-              </div>
-              <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.35rem;">
-                <input
-                  type="file"
-                  id="replace-init-${this.escapeHtml(rep.id)}"
-                  accept="image/*"
-                  style="display:none"
-                />
-                <button
-                  type="button"
-                  class="btn-mine btn-sm-mine btn-secondary"
-                  data-trigger-replace-init="${this.escapeHtml(rep.id)}"
-                  title="Cambiar foto inicial"
-                >
-                  🔄 Cambiar
-                </button>
+                .join('')}
+              ${
+                rep.video_local
+                  ? `
                 <button
                   type="button"
                   class="btn-mine btn-sm-mine"
-                  data-download-init="${this.escapeHtml(rep.id)}"
-                  title="Descargar foto/video inicial"
+                  data-open-video="${this.escapeHtml(rep.id)}"
+                  data-viewer-seg="null"
                 >
-                  ⬇️ Descargar
+                  🎥 Ver Video
                 </button>
-              </div>
+              `
+                  : ''
+              }
             </div>
+          </div>
+        </td>
 
-            <!-- Acciones Multimedia de cada Seguimiento (↳) -->
-            ${seguimientos
-              .map((seg, sIdx) => {
-                const pesoSeg = (seg.fotos_locales || []).reduce(
-                  (acc, f) => acc + (f.peso_bytes || 0),
-                  0
-                );
-                return `
-                <div class="slot-followup">
-                  <div style="font-size:0.76rem; font-weight:700; color:var(--accent-amber);">
-                    ↳ Archivos Seg. #${sIdx + 1} (${formatBytes(pesoSeg)})
-                  </div>
-                  <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.35rem;">
-                    <input
-                      type="file"
-                      id="replace-seg-${this.escapeHtml(rep.id)}-${sIdx}"
-                      accept="image/*"
-                      style="display:none"
-                    />
-                    <button
-                      type="button"
-                      class="btn-mine btn-sm-mine btn-secondary"
-                      data-trigger-replace-seg="${this.escapeHtml(rep.id)}"
-                      data-seg-idx="${sIdx}"
-                    >
-                      🔄 Cambiar
-                    </button>
-                    <button
-                      type="button"
-                      class="btn-mine btn-sm-mine"
-                      data-download-seg="${this.escapeHtml(rep.id)}"
-                      data-seg-idx="${sIdx}"
-                      ${(seg.fotos_locales || []).length === 0 ? 'disabled' : ''}
-                    >
-                      ⬇️ Descargar
-                    </button>
-                  </div>
-                </div>
-              `;
+        <!-- COL 4: MULTIMEDIA Y ACCIONES (INICIAL) -->
+        <td class="report-slot-cell">
+          <div class="slot-initial">
+            <div style="font-size:0.76rem; font-weight:700; color:var(--text-muted);">
+              📌 Archivos Iniciales (${
+                (rep.fotos_locales || [])[0]
+                  ? formatBytes(
+                      (rep.fotos_locales || []).reduce((acc, f) => acc + (f.peso_bytes || 0), 0)
+                    )
+                  : '0 KB'
               })
-              .join('')}
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.35rem;">
+              <input
+                type="file"
+                id="replace-init-${this.escapeHtml(rep.id)}"
+                accept="image/*"
+                style="display:none"
+              />
+              <button
+                type="button"
+                class="btn-mine btn-sm-mine btn-secondary"
+                data-trigger-replace-init="${this.escapeHtml(rep.id)}"
+                title="Cambiar foto inicial"
+              >
+                🔄 Cambiar
+              </button>
+              <button
+                type="button"
+                class="btn-mine btn-sm-mine"
+                data-download-init="${this.escapeHtml(rep.id)}"
+                title="Descargar foto/video inicial"
+              >
+                ⬇️ Descargar
+              </button>
+            </div>
           </div>
         </td>
 
         <!-- COL 5: TIPO / PRIORIDAD -->
-        <td>
+        <td rowspan="${totalRows}" class="report-span-cell">
           <div style="display:flex; flex-direction:column; gap:0.45rem;">
             <span class="badge ${prioClass}">
               ${rep.prioridad === 'Alta' ? '🔴' : rep.prioridad === 'Media' ? '🟡' : '🔵'} Prioridad ${this.escapeHtml(rep.prioridad)}
@@ -1282,51 +1188,29 @@ export class CapturaReporteView {
           </div>
         </td>
 
-        <!-- COL 6: OBSERVACIÓN PRINCIPAL Y COMENTARIOS POSTERIORES -->
-        <td>
-          <div class="aligned-stack">
-            <div class="slot-initial">
-              <div>
-                <div style="font-size:0.76rem; font-weight:800; color:var(--accent-blue); margin-bottom:0.2rem;">
-                  📌 Observación Principal
-                </div>
-                <div style="font-size:0.92rem;">${this.escapeHtml(rep.observacion)}</div>
+        <!-- COL 6: OBSERVACIÓN PRINCIPAL -->
+        <td class="report-slot-cell">
+          <div class="slot-initial">
+            <div>
+              <div style="font-size:0.76rem; font-weight:800; color:var(--accent-blue); margin-bottom:0.2rem;">
+                📌 Observación Principal
               </div>
-              <div style="margin-top:0.45rem;">
-                <button
-                  type="button"
-                  class="btn-mine btn-sm-mine"
-                  data-open-followup-modal="${this.escapeHtml(rep.id)}"
-                >
-                  + Agregar Seguimiento (↳)
-                </button>
-              </div>
+              <div style="font-size:0.92rem;">${this.escapeHtml(rep.observacion)}</div>
             </div>
-
-            ${seguimientos
-              .map(
-                (seg, sIdx) => `
-              <div class="slot-followup">
-                <div>
-                  <span class="badge badge-media" style="margin-bottom:0.3rem;">
-                    ↳ ⚠️ ${this.escapeHtml(seg.estado_seguimiento || 'Sigue observación')}
-                  </span>
-                  <div style="font-size:0.9rem; margin-top:0.2rem;">
-                    ${this.escapeHtml(seg.comentario)}
-                  </div>
-                </div>
-                <div style="font-size:0.73rem; color:var(--text-muted);">
-                  Comentario posterior #${sIdx + 1}
-                </div>
-              </div>
-            `
-              )
-              .join('')}
+            <div style="margin-top:0.45rem;">
+              <button
+                type="button"
+                class="btn-mine btn-sm-mine"
+                data-open-followup-modal="${this.escapeHtml(rep.id)}"
+              >
+                + Agregar Seguimiento (↳)
+              </button>
+            </div>
           </div>
         </td>
 
         <!-- COL 7: ESTADO -->
-        <td>
+        <td rowspan="${totalRows}" class="report-span-cell">
           <div style="display:flex; flex-direction:column; gap:0.5rem;">
             <span class="badge ${rep.sincronizado_en_nube_real ? 'badge-baja' : 'badge-pending'}">
               ${rep.sincronizado_en_nube_real ? '☁️ EN NUBE' : `⏳ ${this.escapeHtml(rep.estado.toUpperCase())}`}
@@ -1344,6 +1228,113 @@ export class CapturaReporteView {
         </td>
       </tr>
     `;
+
+    const followupRowsHtml = seguimientos
+      .map((seg, sIdx) => {
+        const isLastSeg = sIdx === seguimientos.length - 1;
+        const segRowClasses = `report-row-followup ${groupStripeClass}${isLastSeg ? ' report-row-last' : ''}`;
+        const segFotos = seg.fotos_locales || [];
+        const pesoSeg = segFotos.reduce((acc, f) => acc + (f.peso_bytes || 0), 0);
+
+        return `
+      <tr class="${segRowClasses}" data-report-id="${this.escapeHtml(rep.id)}" data-seg-row="${sIdx}">
+        <!-- COL 2: FECHA SEGUIMIENTO #${sIdx + 1} -->
+        <td class="report-slot-cell">
+          <div class="slot-followup">
+            <div>
+              <div style="font-size:0.76rem; color:var(--accent-amber); font-weight:800;">↳ Seguimiento #${sIdx + 1}</div>
+              <div style="font-size:0.98rem; font-weight:800; margin-top:0.2rem; white-space:nowrap;">${this.escapeHtml(seg.fecha)}</div>
+            </div>
+            <div style="font-size:0.74rem; color:var(--text-muted);">Fecha Seg.</div>
+          </div>
+        </td>
+
+        <!-- COL 3: VISTA PREVIA SEGUIMIENTO #${sIdx + 1} -->
+        <td class="report-slot-cell">
+          <div class="slot-followup">
+            <div style="font-size:0.75rem; color:var(--accent-amber); font-weight:700; margin-bottom:0.25rem;">
+              ↳ Vista Seg. #${sIdx + 1} (${segFotos.length} foto(s)${seg.video_local ? ' + 1 video' : ''})
+            </div>
+            <div class="preview-strip">
+              ${
+                segFotos.length === 0 && !seg.video_local
+                  ? `<span style="font-size:0.78rem; color:var(--text-muted);">Sin foto adjunta</span>`
+                  : segFotos
+                      .map((f, fIdx) => {
+                        const url = f.blob ? this.createObjectUrl(f.blob) : (f.signedUrl || '');
+                        return `
+                        <img
+                          src="${url}"
+                          alt="Miniatura seg ${fIdx + 1}"
+                          class="table-thumb"
+                          data-open-viewer="${this.escapeHtml(rep.id)}"
+                          data-viewer-seg="${sIdx}"
+                          data-viewer-idx="${fIdx}"
+                        />
+                      `;
+                      })
+                      .join('')
+              }
+            </div>
+          </div>
+        </td>
+
+        <!-- COL 4: MULTIMEDIA Y ACCIONES SEGUIMIENTO #${sIdx + 1} -->
+        <td class="report-slot-cell">
+          <div class="slot-followup">
+            <div style="font-size:0.76rem; font-weight:700; color:var(--accent-amber);">
+              ↳ Archivos Seg. #${sIdx + 1} (${formatBytes(pesoSeg)})
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.35rem;">
+              <input
+                type="file"
+                id="replace-seg-${this.escapeHtml(rep.id)}-${sIdx}"
+                accept="image/*"
+                style="display:none"
+              />
+              <button
+                type="button"
+                class="btn-mine btn-sm-mine btn-secondary"
+                data-trigger-replace-seg="${this.escapeHtml(rep.id)}"
+                data-seg-idx="${sIdx}"
+              >
+                🔄 Cambiar
+              </button>
+              <button
+                type="button"
+                class="btn-mine btn-sm-mine"
+                data-download-seg="${this.escapeHtml(rep.id)}"
+                data-seg-idx="${sIdx}"
+                ${segFotos.length === 0 ? 'disabled' : ''}
+              >
+                ⬇️ Descargar
+              </button>
+            </div>
+          </div>
+        </td>
+
+        <!-- COL 6: COMENTARIO POSTERIOR SEGUIMIENTO #${sIdx + 1} -->
+        <td class="report-slot-cell">
+          <div class="slot-followup">
+            <div>
+              <span class="badge badge-media" style="margin-bottom:0.3rem;">
+                ↳ ⚠️ ${this.escapeHtml(seg.estado_seguimiento || 'Sigue observación')}
+              </span>
+              <div style="font-size:0.9rem; margin-top:0.2rem;">
+                ${this.escapeHtml(seg.comentario)}
+              </div>
+            </div>
+            <div style="font-size:0.73rem; color:var(--text-muted);">
+              Comentario posterior #${sIdx + 1}
+            </div>
+          </div>
+        </td>
+      </tr>
+    `;
+      })
+      .join('');
+
+    return `${initialRowHtml}${followupRowsHtml}`;
   }
 
   renderViewerModal() {
