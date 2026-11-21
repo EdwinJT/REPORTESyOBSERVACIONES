@@ -67,6 +67,7 @@ export class CapturaReporteView {
     this.viewerModal = null; // { title, url, isVideo, meta }
     this.followupModal = null; // { reporteId, codigo_equipo, fecha, estado_seguimiento, comentario, fotos_locales, video_local, validationError }
     this.deleteConfirmModal = null; // { reporteId, codigo_equipo, fecha, observacion, seguimientosCount, isDeleting }
+    this.editReportModal = null; // { reporteId, codigo_equipo, fecha, tipo, prioridad, observacion, fotos_locales, isUploadingPhotos, uploadingCount, isSaving, validationError }
   }
 
   async init() {
@@ -783,6 +784,92 @@ export class CapturaReporteView {
     }
   }
 
+  // Guardar edición de una fila existente de observación
+  async handleSaveEditReport() {
+    if (!this.editReportModal) return;
+    if (this.editReportModal.isSaving || this.editReportModal.isUploadingPhotos) return;
+
+    const { reporteId, codigo_equipo, fecha, tipo, prioridad, observacion, fotos_locales } =
+      this.editReportModal;
+
+    if (!observacion.trim()) {
+      this.editReportModal.validationError =
+        'La observación principal no puede quedar vacía. Caso contrario, no se guardarán los cambios.';
+      this.render();
+      const ta = this.rootEl.querySelector('#edit-observacion');
+      if (ta) {
+        ta.focus();
+        ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      return;
+    }
+
+    if (!esFechaValida(fecha)) {
+      this.editReportModal.validationError = 'Ingresa una fecha válida.';
+      this.render();
+      return;
+    }
+
+    this.editReportModal.validationError = null;
+    this.editReportModal.isSaving = true;
+    this.render();
+
+    try {
+      const reporte = await this._getWritableReport(reporteId);
+      if (!reporte) return;
+
+      reporte.codigo_equipo = normalizeEquipmentCode(codigo_equipo) || reporte.codigo_equipo;
+      reporte.fecha = fecha;
+      reporte.tipo = tipo || 'Observación';
+      reporte.prioridad = prioridad || 'Media';
+      reporte.observacion = observacion.trim();
+      reporte.fotos_locales = [...(fotos_locales || [])];
+      reporte.fotos_rutas = reporte.fotos_locales
+        .map((f) => f?.ruta_remota)
+        .filter(Boolean);
+      if (Array.isArray(reporte.fotos)) {
+        reporte.fotos = [...reporte.fotos_rutas];
+      }
+
+      reporte.estado = 'pendiente';
+      reporte.sincronizado_en_nube_real = false;
+      reporte.ultimo_error = null;
+      reporte.actualizado_en = new Date().toISOString();
+      await localDb.reportes.put(reporte);
+      await createOrTouchEquipment(reporte.codigo_equipo);
+
+      if (pwaManager.getState().isOnline) {
+        try {
+          await syncQueue.processQueue({
+            triggerSource: 'Edición de observación',
+            forceManual: true,
+            targetReportId: reporte.id,
+            perFileDelayMs: 25
+          });
+        } catch {
+          // Si falla la red momentáneamente, los cambios permanecen guardados en IndexedDB
+        }
+      }
+
+      this.editReportModal = null;
+      await this.reloadData();
+      this.setBanner(
+        'success',
+        `Cambios guardados en la observación del equipo ${reporte.codigo_equipo} (${formatFechaDDMMYYYY(reporte.fecha)}).`
+      );
+    } catch (err) {
+      if (this.editReportModal) {
+        this.editReportModal.isSaving = false;
+      }
+      this.setBanner('error', err?.message || 'No se pudieron guardar los cambios.');
+    } finally {
+      if (this.editReportModal && this.editReportModal.isSaving) {
+        this.editReportModal.isSaving = false;
+        this.render();
+      }
+    }
+  }
+
   render() {
     this.revokeAllUrls();
 
@@ -1300,6 +1387,7 @@ export class CapturaReporteView {
       ${this.renderViewerModal()}
       ${this.renderFollowupModal()}
       ${this.renderDeleteConfirmModal()}
+      ${this.renderEditReportModal()}
     `;
 
     this.attachEvents();
@@ -1423,6 +1511,14 @@ export class CapturaReporteView {
               `
                   : `<span class="badge badge-resolved">✅ Observación Levantada</span>`
               }
+              <button
+                type="button"
+                class="btn-mine btn-sm-mine btn-secondary"
+                data-open-edit-modal="${this.escapeHtml(rep.id)}"
+                title="Editar equipo, fecha, tipo, prioridad, observación o fotos de esta fila"
+              >
+                ✏️ Editar
+              </button>
               <button
                 type="button"
                 class="btn-mine btn-sm-mine btn-danger"
@@ -1835,6 +1931,179 @@ export class CapturaReporteView {
     `;
   }
 
+  renderEditReportModal() {
+    if (!this.editReportModal) return '';
+    const m = this.editReportModal;
+    const isUploading = Boolean(m.isUploadingPhotos);
+    const isSaving = Boolean(m.isSaving);
+    const isBusy = isUploading || isSaving;
+    const photoCount = m.fotos_locales.length;
+    const hasCustomCode = !this.equipos.some((eq) => eq.codigo === m.codigo_equipo);
+
+    let statusPillHtml = `<span class="followup-status-pill empty">Sin fotos adjuntas</span>`;
+    if (isUploading) {
+      statusPillHtml = `<span class="followup-status-pill uploading">⏳ Procesando foto(s)...</span>`;
+    } else if (photoCount > 0) {
+      statusPillHtml = `<span class="followup-status-pill ready">✅ ${photoCount} foto(s) en el reporte</span>`;
+    }
+
+    const thumbsHtml = m.fotos_locales
+      .map((f, fIdx) => {
+        const url = f.blob ? this.createObjectUrl(f.blob) : f.signedUrl || '';
+        const sizeLabel = f.peso_bytes ? formatBytes(f.peso_bytes) : 'Nube';
+        return `
+          <div class="followup-thumb-chip">
+            <button
+              type="button"
+              class="followup-thumb-remove"
+              data-remove-edit-photo="${fIdx}"
+              title="${photoCount <= 1 ? 'Debe conservar al menos 1 foto' : `Quitar foto #${fIdx + 1}`}"
+              aria-label="Quitar foto ${fIdx + 1}"
+              ${isBusy || photoCount <= 1 ? 'disabled' : ''}
+            >✕</button>
+            <img src="${url}" alt="Foto inicial ${fIdx + 1}" class="followup-thumb-img" />
+            <div class="followup-thumb-caption">
+              <span class="followup-thumb-ok">✓ #${fIdx + 1}</span>
+              <span>${sizeLabel}</span>
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+
+    const uploadingCardHtml = isUploading
+      ? `
+        <div class="followup-thumb-uploading" role="status">
+          <div class="followup-spinner"></div>
+          <span>Subiendo${m.uploadingCount > 1 ? ` (${m.uploadingCount})` : ''}...</span>
+        </div>
+      `
+      : '';
+
+    return `
+      <div class="modal-backdrop" id="modal-edit-backdrop" role="dialog" aria-modal="true" aria-labelledby="edit-modal-title">
+        <div class="modal-card">
+          <div class="section-header">
+            <h3 class="section-title" id="edit-modal-title">✏️ Editar Observación — Equipo ${this.escapeHtml(m.codigo_equipo)}</h3>
+            <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-close-edit-modal" ${isBusy ? 'disabled' : ''}>
+              ✕ Cancelar
+            </button>
+          </div>
+
+          <div class="form-grid">
+            <div class="field-group">
+              <label class="field-label" for="edit-codigo-equipo">Código de Equipo *</label>
+              <select id="edit-codigo-equipo" class="select-mine" ${isBusy ? 'disabled' : ''}>
+                ${
+                  hasCustomCode
+                    ? `<option value="${this.escapeHtml(m.codigo_equipo)}" selected>${this.escapeHtml(m.codigo_equipo)}</option>`
+                    : ''
+                }
+                ${this.equipos
+                  .map(
+                    (eq) => `
+                  <option value="${this.escapeHtml(eq.codigo)}" ${
+                      eq.codigo === m.codigo_equipo ? 'selected' : ''
+                    }>
+                    ${this.escapeHtml(eq.codigo)} — ${this.escapeHtml(eq.categoria || 'Equipo')}
+                  </option>
+                `
+                  )
+                  .join('')}
+              </select>
+            </div>
+
+            <div class="field-group">
+              <label class="field-label" for="edit-fecha">
+                <span>Fecha Inicial *</span>
+                <span id="edit-fecha-display" style="font-size:0.86rem; color:var(--accent-blue);">${this.escapeHtml(formatFechaDDMMYYYY(m.fecha))}</span>
+              </label>
+              <input type="date" id="edit-fecha" class="input-mine" value="${this.escapeHtml(m.fecha)}" ${isBusy ? 'disabled' : ''} />
+            </div>
+
+            <div class="field-group">
+              <label class="field-label" for="edit-tipo">Tipo *</label>
+              <select id="edit-tipo" class="select-mine" ${isBusy ? 'disabled' : ''}>
+                <option value="Observación" ${m.tipo === 'Observación' ? 'selected' : ''}>🔍 Observación</option>
+                <option value="Reporte" ${m.tipo === 'Reporte' ? 'selected' : ''}>📄 Reporte</option>
+              </select>
+            </div>
+
+            <div class="field-group">
+              <label class="field-label" for="edit-prioridad">Prioridad *</label>
+              <select id="edit-prioridad" class="select-mine" ${isBusy ? 'disabled' : ''}>
+                <option value="Alta" ${m.prioridad === 'Alta' ? 'selected' : ''}>🔴 Alta</option>
+                <option value="Media" ${m.prioridad === 'Media' ? 'selected' : ''}>🟡 Media</option>
+                <option value="Baja" ${m.prioridad === 'Baja' ? 'selected' : ''}>🔵 Baja</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field-group" style="margin-top:0.85rem;">
+            <label class="field-label" for="edit-observacion">
+              <span>Observación Principal * <span class="required-comment-hint">(Obligatorio)</span></span>
+            </label>
+            <textarea
+              id="edit-observacion"
+              class="textarea-mine ${m.validationError ? 'field-error-input' : ''}"
+              aria-invalid="${m.validationError ? 'true' : 'false'}"
+              placeholder="Describe el hallazgo u observación principal..."
+              ${isBusy ? 'disabled' : ''}
+            >${this.escapeHtml(m.observacion)}</textarea>
+            ${
+              m.validationError
+                ? `<div id="modal-edit-error" class="inline-field-error" role="alert">⚠️ ${this.escapeHtml(m.validationError)}</div>`
+                : ''
+            }
+          </div>
+
+          <div class="media-capture-box">
+            <div class="field-label" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.45rem; margin-bottom:0.55rem;">
+              <span>Fotos Iniciales (${photoCount}/5 fotos)</span>
+              ${statusPillHtml}
+            </div>
+            <input type="file" id="edit-photo-file" accept="image/*" multiple style="display:none" />
+            <div class="followup-media-row">
+              <div class="media-buttons-row">
+                <button
+                  type="button"
+                  class="btn-mine btn-sm-mine btn-primary"
+                  id="btn-edit-add-photo"
+                  ${photoCount >= 5 || isBusy ? 'disabled' : ''}
+                >
+                  ${isUploading ? '⏳ Procesando...' : '📷 / 📎 Agregar Foto'}
+                </button>
+              </div>
+              <div class="followup-thumbs-inline" aria-live="polite">
+                ${thumbsHtml}${uploadingCardHtml}
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-top:1rem; flex-wrap:wrap;">
+            <button type="button" class="btn-mine btn-secondary" id="btn-cancel-edit-report" ${isBusy ? 'disabled' : ''}>
+              ✕ Cancelar
+            </button>
+            <button
+              type="button"
+              class="btn-mine btn-primary"
+              id="btn-save-edit-report"
+              ${isBusy ? 'disabled' : ''}
+            >
+              ${
+                isSaving
+                  ? '⏳ Guardando cambios...'
+                  : isUploading
+                    ? '⏳ Procesando fotos...'
+                    : '💾 Guardar Cambios'
+              }
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   attachEvents() {
     // Cerrar banner
     const btnCloseBanner = this.rootEl.querySelector('#btn-close-banner');
@@ -2232,6 +2501,143 @@ export class CapturaReporteView {
     });
     this.rootEl.querySelector('#btn-confirm-delete-report')?.addEventListener('click', () => {
       this.handleConfirmDeleteReport();
+    });
+
+    // Abrir modal para editar fila completa de observación
+    this.rootEl.querySelectorAll('[data-open-edit-modal]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const repId = btn.getAttribute('data-open-edit-modal');
+        const rep = this.reportes.find((r) => r.id === repId);
+        if (!rep) return;
+        this.editReportModal = {
+          reporteId: rep.id,
+          codigo_equipo: rep.codigo_equipo,
+          fecha: rep.fecha,
+          tipo: rep.tipo || 'Observación',
+          prioridad: rep.prioridad || 'Media',
+          observacion: rep.observacion || '',
+          fotos_locales: Array.isArray(rep.fotos_locales)
+            ? rep.fotos_locales.map((f) => ({ ...f }))
+            : [],
+          isUploadingPhotos: false,
+          uploadingCount: 0,
+          isSaving: false,
+          validationError: null
+        };
+        this.render();
+      });
+    });
+
+    const closeEditModal = () => {
+      if (this.editReportModal?.isSaving || this.editReportModal?.isUploadingPhotos) return;
+      this.editReportModal = null;
+      this.render();
+    };
+    this.rootEl.querySelector('#btn-close-edit-modal')?.addEventListener('click', closeEditModal);
+    this.rootEl.querySelector('#btn-cancel-edit-report')?.addEventListener('click', closeEditModal);
+    this.rootEl.querySelector('#modal-edit-backdrop')?.addEventListener('click', (e) => {
+      if (e.target.id === 'modal-edit-backdrop') closeEditModal();
+    });
+
+    this.rootEl.querySelector('#edit-codigo-equipo')?.addEventListener('change', (e) => {
+      if (this.editReportModal) {
+        this.editReportModal.codigo_equipo = e.target.value;
+        const titleEl = this.rootEl.querySelector('#edit-modal-title');
+        if (titleEl) {
+          titleEl.textContent = `✏️ Editar Observación — Equipo ${e.target.value}`;
+        }
+      }
+    });
+    this.rootEl.querySelector('#edit-fecha')?.addEventListener('change', (e) => {
+      if (this.editReportModal) {
+        this.editReportModal.fecha = e.target.value;
+        const disp = this.rootEl.querySelector('#edit-fecha-display');
+        if (disp) disp.textContent = formatFechaDDMMYYYY(e.target.value);
+      }
+    });
+    this.rootEl.querySelector('#edit-tipo')?.addEventListener('change', (e) => {
+      if (this.editReportModal) this.editReportModal.tipo = e.target.value;
+    });
+    this.rootEl.querySelector('#edit-prioridad')?.addEventListener('change', (e) => {
+      if (this.editReportModal) this.editReportModal.prioridad = e.target.value;
+    });
+    this.rootEl.querySelector('#edit-observacion')?.addEventListener('input', (e) => {
+      if (this.editReportModal) {
+        this.editReportModal.observacion = e.target.value;
+        if (this.editReportModal.validationError && e.target.value.trim()) {
+          this.editReportModal.validationError = null;
+          e.target.classList.remove('field-error-input');
+          e.target.setAttribute('aria-invalid', 'false');
+          this.rootEl.querySelector('#modal-edit-error')?.remove();
+        }
+      }
+    });
+
+    const editPhotoFile = this.rootEl.querySelector('#edit-photo-file');
+    this.rootEl.querySelector('#btn-edit-add-photo')?.addEventListener('click', () => {
+      editPhotoFile?.click();
+    });
+    editPhotoFile?.addEventListener('change', async (e) => {
+      if (!this.editReportModal || !e.target.files) return;
+      const remaining = Math.max(0, 5 - this.editReportModal.fotos_locales.length);
+      const selectedFiles = Array.from(e.target.files).slice(0, remaining);
+      if (selectedFiles.length === 0) {
+        e.target.value = '';
+        return;
+      }
+
+      this.editReportModal.isUploadingPhotos = true;
+      this.editReportModal.uploadingCount = selectedFiles.length;
+      this.render();
+
+      try {
+        for (const f of selectedFiles) {
+          if (!this.editReportModal || this.editReportModal.fotos_locales.length >= 5) break;
+          const c = await compressPhotoFile(f, 'estandar');
+          if (!this.editReportModal) break;
+          const usedIndices = new Set(
+            this.editReportModal.fotos_locales.map((item) => Number(item.indice) || 0)
+          );
+          let nextIdx = 1;
+          while (usedIndices.has(nextIdx)) nextIdx++;
+          this.editReportModal.fotos_locales.push({
+            indice: nextIdx,
+            ...c
+          });
+          this.editReportModal.uploadingCount = Math.max(
+            0,
+            (this.editReportModal.uploadingCount || 1) - 1
+          );
+          this.render();
+        }
+      } finally {
+        if (this.editReportModal) {
+          this.editReportModal.isUploadingPhotos = false;
+          this.editReportModal.uploadingCount = 0;
+          this.render();
+        }
+        e.target.value = '';
+      }
+    });
+
+    this.rootEl.querySelectorAll('[data-remove-edit-photo]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (
+          !this.editReportModal ||
+          this.editReportModal.isUploadingPhotos ||
+          this.editReportModal.isSaving ||
+          this.editReportModal.fotos_locales.length <= 1
+        ) {
+          return;
+        }
+        const idx = Number(btn.getAttribute('data-remove-edit-photo'));
+        this.editReportModal.fotos_locales.splice(idx, 1);
+        this.render();
+      });
+    });
+
+    this.rootEl.querySelector('#btn-save-edit-report')?.addEventListener('click', () => {
+      this.handleSaveEditReport();
     });
 
     // Eventos de modales
