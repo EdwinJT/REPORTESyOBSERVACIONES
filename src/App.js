@@ -41,7 +41,8 @@ export class AppController {
   constructor(mountEl) {
     this.mountEl = mountEl;
     this.isNightTheme = false; // Por defecto inicia en Modo Claridad Industrial
-    this.zoomLevel = 0.82; // Vista panorámica por defecto (82%)
+    this.userAdjustedZoom = false;
+    this.zoomLevel = this.getRecommendedZoom(); // 62% en celular, 68% tablet, 82% PC
     this.viewMode = 'operativo'; // 'operativo' (pestañas limpias) | 'ingenieria' (módulos M1..M6 + Levantadas)
     this.activeModule = 'm1'; // En modo operativo inicia directo en M1 (Registrar Reporte)
     this.m1TableTab = 'activas'; // 'activas' | 'levantadas'
@@ -1021,8 +1022,19 @@ export class AppController {
     this.updateTopbarStats();
   }
 
-  applyZoom(newZoom) {
-    this.zoomLevel = Math.min(1.15, Math.max(0.65, Number(newZoom.toFixed(2))));
+  getRecommendedZoom() {
+    if (typeof window === 'undefined') return 0.82;
+    const w = window.innerWidth;
+    if (w <= 480) return 0.62;
+    if (w <= 768) return 0.68;
+    return 0.82;
+  }
+
+  applyZoom(newZoom, { isManual = true } = {}) {
+    if (isManual) {
+      this.userAdjustedZoom = true;
+    }
+    this.zoomLevel = Math.min(1.15, Math.max(0.5, Number(newZoom.toFixed(2))));
     document.documentElement.style.setProperty('--ui-zoom', String(this.zoomLevel));
     const label = this.mountEl.querySelector('#label-zoom');
     if (label) {
@@ -1127,6 +1139,9 @@ export class AppController {
         if (!this.userToggledTopbar) {
           this.isTopbarCollapsed = window.innerWidth <= 980;
           this.updateTopbarCollapsedUI();
+        }
+        if (!this.userAdjustedZoom) {
+          this.applyZoom(this.getRecommendedZoom(), { isManual: false });
         }
       };
       window.addEventListener('resize', this._resizeHandler);
