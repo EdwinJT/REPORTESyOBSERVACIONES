@@ -54,9 +54,10 @@ export class CapturaReporteView {
     };
 
     this.banner = null; // { type: 'error' | 'success', text: string }
+    this.obsValidationError = null;
     this.isCompressing = false;
     this.viewerModal = null; // { title, url, isVideo, meta }
-    this.followupModal = null; // { reporteId, codigo_equipo, fecha, estado_seguimiento, comentario, fotos_locales, video_local }
+    this.followupModal = null; // { reporteId, codigo_equipo, fecha, estado_seguimiento, comentario, fotos_locales, video_local, validationError }
   }
 
   async init() {
@@ -411,9 +412,17 @@ export class CapturaReporteView {
     }
 
     if (!this.form.observacion.trim()) {
-      this.setBanner('error', 'Por favor ingresa el detalle en la Observación Principal.');
+      this.obsValidationError =
+        'Debes colocar un comentario u observación obligatoria. Caso contrario, el reporte no se guardará.';
+      this.setBanner('error', this.obsValidationError);
+      const ta = this.rootEl.querySelector('#textarea-observacion');
+      if (ta) {
+        ta.focus();
+        ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
       return;
     }
+    this.obsValidationError = null;
 
     const { es_nuevo_codigo } = await createOrTouchEquipment(codigo);
     const nowIso = new Date().toISOString();
@@ -424,6 +433,13 @@ export class CapturaReporteView {
     const observacionesIndependientes = [];
 
     for (const extra of this.form.observaciones_adicionales) {
+      if (!extra.comentario.trim() && (extra.fotos_locales.length > 0 || extra.video_local)) {
+        this.setBanner(
+          'error',
+          'Cada observación/seguimiento adicional con fotos requiere un comentario obligatorio; caso contrario no se guardará.'
+        );
+        return;
+      }
       if (!extra.comentario.trim() && extra.fotos_locales.length === 0 && !extra.video_local) {
         continue;
       }
@@ -496,6 +512,7 @@ export class CapturaReporteView {
 
     // Limpiar formulario manteniendo el equipo activo y la fecha de Perú
     this.form.observacion = '';
+    this.obsValidationError = null;
     this.form.fotos_locales = [];
     this.form.video_local = null;
     this.form.observaciones_adicionales = [];
@@ -575,9 +592,17 @@ export class CapturaReporteView {
       this.followupModal;
 
     if (!comentario.trim()) {
-      this.setBanner('error', 'Escribe el comentario del seguimiento posterior.');
+      this.followupModal.validationError =
+        'Debes colocar un comentario obligatorio. Caso contrario, el seguimiento no se guardará.';
+      this.render();
+      const ta = this.rootEl.querySelector('#modal-seg-comentario');
+      if (ta) {
+        ta.focus();
+        ta.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
       return;
     }
+    this.followupModal.validationError = null;
 
     this.followupModal.isSaving = true;
     this.render();
@@ -933,13 +958,20 @@ export class CapturaReporteView {
           <!-- Observación Principal y botón "+ Agregar otra observación" -->
           <div class="field-group" style="margin-top: 1rem;">
             <label class="field-label" for="textarea-observacion">
-              <span>📌 Observación Principal / Hallazgo en Campo *</span>
+              <span>📌 Observación Principal / Hallazgo en Campo * <span class="required-comment-hint">(Obligatorio — sin comentario no se guardará)</span></span>
             </label>
             <textarea
               id="textarea-observacion"
-              class="textarea-mine"
+              required
+              aria-invalid="${this.obsValidationError ? 'true' : 'false'}"
+              class="textarea-mine${this.obsValidationError ? ' field-error-input' : ''}"
               placeholder="Describe el hallazgo, componente, código en placa o condición operativa..."
             >${this.escapeHtml(this.form.observacion)}</textarea>
+            ${
+              this.obsValidationError
+                ? `<div id="main-obs-error" class="inline-field-error" role="alert">⚠️ ${this.escapeHtml(this.obsValidationError)}</div>`
+                : ''
+            }
           </div>
 
           <!-- Lista dinámica de "+ Agregar otra observación" -->
@@ -1519,8 +1551,21 @@ export class CapturaReporteView {
           </div>
 
           <div class="field-group" style="margin-top:0.85rem;">
-            <label class="field-label">Comentario Posterior *</label>
-            <textarea id="modal-seg-comentario" class="textarea-mine" placeholder="Describe la evolución de la observación o el trabajo realizado...">${this.escapeHtml(m.comentario)}</textarea>
+            <label class="field-label" for="modal-seg-comentario">
+              <span>Comentario Posterior * <span class="required-comment-hint">(Obligatorio — sin comentario no se guardará)</span></span>
+            </label>
+            <textarea
+              id="modal-seg-comentario"
+              required
+              aria-invalid="${m.validationError ? 'true' : 'false'}"
+              class="textarea-mine${m.validationError ? ' field-error-input' : ''}"
+              placeholder="Describe la evolución de la observación o el trabajo realizado..."
+            >${this.escapeHtml(m.comentario)}</textarea>
+            ${
+              m.validationError
+                ? `<div id="modal-seg-error" class="inline-field-error" role="alert">⚠️ ${this.escapeHtml(m.validationError)}</div>`
+                : ''
+            }
           </div>
 
           <div class="media-capture-box">
@@ -1687,6 +1732,12 @@ export class CapturaReporteView {
     if (textareaObs) {
       textareaObs.addEventListener('input', (e) => {
         this.form.observacion = e.target.value;
+        if (this.obsValidationError && e.target.value.trim()) {
+          this.obsValidationError = null;
+          e.target.classList.remove('field-error-input');
+          e.target.setAttribute('aria-invalid', 'false');
+          this.rootEl.querySelector('#main-obs-error')?.remove();
+        }
       });
     }
 
@@ -1947,7 +1998,8 @@ export class CapturaReporteView {
           video_local: null,
           isUploadingPhotos: false,
           uploadingCount: 0,
-          isSaving: false
+          isSaving: false,
+          validationError: null
         };
         this.render();
       });
@@ -1978,7 +2030,15 @@ export class CapturaReporteView {
       if (this.followupModal) this.followupModal.estado_seguimiento = e.target.value;
     });
     this.rootEl.querySelector('#modal-seg-comentario')?.addEventListener('input', (e) => {
-      if (this.followupModal) this.followupModal.comentario = e.target.value;
+      if (this.followupModal) {
+        this.followupModal.comentario = e.target.value;
+        if (this.followupModal.validationError && e.target.value.trim()) {
+          this.followupModal.validationError = null;
+          e.target.classList.remove('field-error-input');
+          e.target.setAttribute('aria-invalid', 'false');
+          this.rootEl.querySelector('#modal-seg-error')?.remove();
+        }
+      }
     });
 
     const modalSegFile = this.rootEl.querySelector('#modal-seg-file');
