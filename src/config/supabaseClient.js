@@ -701,24 +701,29 @@ class SupabaseResilientClient {
           try {
             const onConflictCol = options.onConflict || 'id';
             const endpoint = `${cfg.url.replace(/\/$/, '')}/rest/v1/${encodeURIComponent(tableName)}?on_conflict=${encodeURIComponent(onConflictCol)}`;
-            const cleanRows = rowsToUpsert.map((r) => ({
-              id: r.id,
-              codigo_equipo: r.codigo_equipo,
-              fuera_catalogo: Boolean(r.fuera_catalogo),
-              fecha: r.fecha,
-              hora_peru: r.hora_peru || '',
-              tipo: r.tipo,
-              prioridad: r.prioridad,
-              observacion: r.observacion || '',
-              calidad_compresion: r.calidad_compresion || 'estandar',
-              fotos: r.fotos || [],
-              video: r.video || null,
-              seguimientos: r.seguimientos || [],
-              creado_por: r.creado_por || currentUserId,
-              creado_en: r.creado_en || new Date().toISOString(),
-              actualizado_en: new Date().toISOString(),
-              dispositivo: r.dispositivo || ''
-            }));
+            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+            const cleanRows = rowsToUpsert.map((r) => {
+              const rawUserId = r.creado_por || currentUserId;
+              const safeUserId = uuidRegex.test(rawUserId) ? rawUserId : null;
+              return {
+                id: r.id,
+                codigo_equipo: r.codigo_equipo,
+                fuera_catalogo: Boolean(r.fuera_catalogo),
+                fecha: r.fecha,
+                hora_peru: r.hora_peru || '',
+                tipo: r.tipo,
+                prioridad: r.prioridad,
+                observacion: r.observacion || '',
+                calidad_compresion: r.calidad_compresion || 'estandar',
+                fotos: r.fotos || [],
+                video: r.video || null,
+                seguimientos: r.seguimientos || [],
+                creado_por: safeUserId,
+                creado_en: r.creado_en || new Date().toISOString(),
+                actualizado_en: new Date().toISOString(),
+                dispositivo: r.dispositivo || ''
+              };
+            });
 
             const res = await fetch(endpoint, {
               method: 'POST',
