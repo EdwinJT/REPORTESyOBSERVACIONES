@@ -640,17 +640,26 @@ export class CapturaReporteView {
     }
   }
 
-  // Guardar un nuevo seguimiento (↳) desde el modal rápido de la tabla
+  // Guardar o editar un seguimiento (↳) desde el modal rápido de la tabla
   async handleSaveFollowupModal() {
     if (!this.followupModal) return;
     if (this.followupModal.isSaving || this.followupModal.isUploadingPhotos) return;
 
-    const { reporteId, fecha, estado_seguimiento, comentario, fotos_locales, video_local, mode } =
-      this.followupModal;
+    const {
+      reporteId,
+      editSegIndex = null,
+      fecha,
+      estado_seguimiento,
+      comentario,
+      fotos_locales,
+      video_local,
+      mode
+    } = this.followupModal;
+    const isEditMode = editSegIndex !== null && editSegIndex !== undefined;
     const isResolveMode = mode === 'levantada';
 
     if (!comentario.trim()) {
-      this.followupModal.validationError = isResolveMode
+      this.followupModal.validationError = isResolveMode && !isEditMode
         ? 'Debes colocar un comentario obligatorio para levantar la observación. Caso contrario, no se guardará.'
         : 'Debes colocar un comentario obligatorio. Caso contrario, el seguimiento no se guardará.';
       this.render();
@@ -674,14 +683,42 @@ export class CapturaReporteView {
         reporte.seguimientos = [];
       }
 
-      reporte.seguimientos.push({
-        id: crypto.randomUUID(),
-        fecha: fecha || getFechaHoyPeru(),
-        estado_seguimiento: estado_seguimiento || 'Sigue observación',
-        comentario: comentario.trim(),
-        fotos_locales: fotos_locales || [],
-        video_local: video_local || null
-      });
+      const nextFotosLocales = [...(fotos_locales || [])];
+
+      if (isEditMode) {
+        const prevSeg = reporte.seguimientos[editSegIndex];
+        if (!prevSeg) {
+          this.followupModal = null;
+          await this.reloadData();
+          this.setBanner('error', 'No se encontró el seguimiento que intentabas editar.');
+          return;
+        }
+
+        const updatedFotosRutas = nextFotosLocales
+          .map((f) => f?.ruta_remota)
+          .filter(Boolean);
+
+        reporte.seguimientos[editSegIndex] = {
+          ...prevSeg,
+          id: prevSeg.id || crypto.randomUUID(),
+          fecha: fecha || prevSeg.fecha || getFechaHoyPeru(),
+          estado_seguimiento:
+            estado_seguimiento || prevSeg.estado_seguimiento || 'Sigue observación',
+          comentario: comentario.trim(),
+          fotos_locales: nextFotosLocales,
+          fotos: updatedFotosRutas,
+          video_local: video_local !== undefined ? video_local : prevSeg.video_local || null
+        };
+      } else {
+        reporte.seguimientos.push({
+          id: crypto.randomUUID(),
+          fecha: fecha || getFechaHoyPeru(),
+          estado_seguimiento: estado_seguimiento || 'Sigue observación',
+          comentario: comentario.trim(),
+          fotos_locales: nextFotosLocales,
+          video_local: video_local || null
+        });
+      }
 
       reporte.estado = 'pendiente';
       reporte.sincronizado_en_nube_real = false;
@@ -692,7 +729,11 @@ export class CapturaReporteView {
       if (pwaManager.getState().isOnline) {
         try {
           await syncQueue.processQueue({
-            triggerSource: isResolveMode ? 'Observación levantada' : 'Nuevo seguimiento agregado',
+            triggerSource: isEditMode
+              ? `Edición de seguimiento #${editSegIndex + 1}`
+              : isResolveMode
+                ? 'Observación levantada'
+                : 'Nuevo seguimiento agregado',
             forceManual: true,
             targetReportId: reporte.id,
             perFileDelayMs: 25
@@ -706,12 +747,19 @@ export class CapturaReporteView {
       await this.reloadData();
       this.setBanner(
         'success',
-        isResolveMode
-          ? `Observación levantada registrada en el equipo ${reporte.codigo_equipo}.`
-          : `Seguimiento (↳) agregado al reporte de ${reporte.codigo_equipo}.`
+        isEditMode
+          ? `Cambios guardados en el seguimiento #${editSegIndex + 1} del equipo ${reporte.codigo_equipo}.`
+          : isResolveMode
+            ? `Observación levantada registrada en el equipo ${reporte.codigo_equipo}.`
+            : `Seguimiento (↳) agregado al reporte de ${reporte.codigo_equipo}.`
       );
-    } finally {
+    } catch (err) {
       if (this.followupModal) {
+        this.followupModal.isSaving = false;
+      }
+      this.setBanner('error', err?.message || 'No se pudo guardar el seguimiento.');
+    } finally {
+      if (this.followupModal && this.followupModal.isSaving) {
         this.followupModal.isSaving = false;
         this.render();
       }
@@ -760,14 +808,58 @@ export class CapturaReporteView {
     );
   }
 
-  // Eliminar toda la fila de observación (reporte inicial + fotos + todos sus seguimientos)
+  // Eliminar un seguimiento individual o toda la fila de observación
   async handleConfirmDeleteReport() {
     if (!this.deleteConfirmModal || this.deleteConfirmModal.isDeleting) return;
-    const { reporteId, codigo_equipo, fecha } = this.deleteConfirmModal;
+    const { isFollowup, reporteId, segIndex, segNumber, codigo_equipo, fecha, segFecha } =
+      this.deleteConfirmModal;
     this.deleteConfirmModal.isDeleting = true;
     this.render();
 
     try {
+      if (isFollowup) {
+        const reporte = await this._getWritableReport(reporteId);
+        if (
+          !reporte ||
+          !Array.isArray(reporte.seguimientos) ||
+          segIndex < 0 ||
+          segIndex >= reporte.seguimientos.length
+        ) {
+          this.deleteConfirmModal = null;
+          await this.reloadData();
+          this.setBanner('error', 'No se encontró el seguimiento que intentabas borrar.');
+          return;
+        }
+
+        reporte.seguimientos.splice(segIndex, 1);
+        reporte.estado = 'pendiente';
+        reporte.sincronizado_en_nube_real = false;
+        reporte.ultimo_error = null;
+        reporte.actualizado_en = new Date().toISOString();
+        await localDb.reportes.put(reporte);
+
+        if (pwaManager.getState().isOnline) {
+          try {
+            await syncQueue.processQueue({
+              triggerSource: `Borrado de seguimiento #${segNumber}`,
+              forceManual: true,
+              targetReportId: reporte.id,
+              perFileDelayMs: 25
+            });
+          } catch {
+            // Permanece guardado en IndexedDB si hay corte momentáneo de red
+          }
+        }
+
+        this.deleteConfirmModal = null;
+        await this.reloadData();
+        this.setBanner(
+          'success',
+          `Se borró el Seguimiento #${segNumber} (${formatFechaDDMMYYYY(segFecha)}) del equipo ${codigo_equipo}. La observación principal se mantiene.`
+        );
+        return;
+      }
+
       await localDb.reportes.delete(reporteId);
       await supabase.from('reportes').delete(reporteId);
       this.deleteConfirmModal = null;
@@ -779,8 +871,13 @@ export class CapturaReporteView {
     } catch (err) {
       if (this.deleteConfirmModal) {
         this.deleteConfirmModal.isDeleting = false;
+        this.render();
       }
-      this.setBanner('error', err?.message || 'No se pudo borrar la observación.');
+      this.setBanner(
+        'error',
+        err?.message ||
+          (isFollowup ? 'No se pudo borrar el seguimiento.' : 'No se pudo borrar la observación.')
+      );
     }
   }
 
@@ -1676,8 +1773,30 @@ export class CapturaReporteView {
                 ${this.escapeHtml(seg.comentario)}
               </div>
             </div>
-            <div style="font-size:0.73rem; color:var(--text-muted);">
-              ${isResolvedSeg ? `Cierre / Levantamiento (#${sIdx + 1})` : `Comentario posterior #${sIdx + 1}`}
+            <div style="margin-top:0.45rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.4rem;">
+              <span style="font-size:0.73rem; color:var(--text-muted);">
+                ${isResolvedSeg ? `Cierre / Levantamiento (#${sIdx + 1})` : `Comentario posterior #${sIdx + 1}`}
+              </span>
+              <div style="display:flex; gap:0.35rem; flex-wrap:wrap; align-items:center;">
+                <button
+                  type="button"
+                  class="btn-mine btn-sm-mine btn-secondary"
+                  data-edit-followup="${this.escapeHtml(rep.id)}"
+                  data-seg-idx="${sIdx}"
+                  title="Editar fecha, estado, comentario o fotos de este seguimiento"
+                >
+                  ✏️ Editar
+                </button>
+                <button
+                  type="button"
+                  class="btn-mine btn-sm-mine btn-danger"
+                  data-delete-followup="${this.escapeHtml(rep.id)}"
+                  data-seg-idx="${sIdx}"
+                  title="Borrar solo este seguimiento (mantiene la observación principal)"
+                >
+                  🗑️ Borrar
+                </button>
+              </div>
             </div>
           </div>
         </td>
@@ -1726,6 +1845,8 @@ export class CapturaReporteView {
   renderFollowupModal() {
     if (!this.followupModal) return '';
     const m = this.followupModal;
+    const isEditMode = m.editSegIndex !== undefined && m.editSegIndex !== null;
+    const segNumber = isEditMode ? m.editSegIndex + 1 : null;
     const isUploading = Boolean(m.isUploadingPhotos);
     const isSaving = Boolean(m.isSaving);
     const isBusy = isUploading || isSaving;
@@ -1735,12 +1856,13 @@ export class CapturaReporteView {
     if (isUploading) {
       statusPillHtml = `<span class="followup-status-pill uploading">⏳ Procesando foto(s)...</span>`;
     } else if (photoCount > 0) {
-      statusPillHtml = `<span class="followup-status-pill ready">✅ ${photoCount} foto(s) lista(s) para subir</span>`;
+      statusPillHtml = `<span class="followup-status-pill ready">✅ ${photoCount} foto(s) ${isEditMode ? 'en el seguimiento' : 'lista(s) para subir'}</span>`;
     }
 
     const thumbsHtml = m.fotos_locales
       .map((f, fIdx) => {
         const url = f.blob ? this.createObjectUrl(f.blob) : f.signedUrl || '';
+        const sizeLabel = f.peso_bytes ? formatBytes(f.peso_bytes) : 'Nube';
         return `
           <div class="followup-thumb-chip">
             <button
@@ -1754,7 +1876,7 @@ export class CapturaReporteView {
             <img src="${url}" alt="Miniatura seguimiento ${fIdx + 1}" class="followup-thumb-img" />
             <div class="followup-thumb-caption">
               <span class="followup-thumb-ok">✓ #${fIdx + 1}</span>
-              <span>${formatBytes(f.peso_bytes || 0)}</span>
+              <span>${sizeLabel}</span>
             </div>
           </div>
         `;
@@ -1771,17 +1893,21 @@ export class CapturaReporteView {
       : '';
 
     const isResolveMode = m.mode === 'levantada';
+    const isResolvedState = this.isSegLevantada({ estado_seguimiento: m.estado_seguimiento });
+    const modalTitle = isEditMode
+      ? isResolveMode
+        ? `✏️ Editar Cierre / Levantamiento #${segNumber} — Equipo ${this.escapeHtml(m.codigo_equipo)}`
+        : `✏️ Editar Seguimiento #${segNumber} — Equipo ${this.escapeHtml(m.codigo_equipo)}`
+      : isResolveMode
+        ? `✅ Levantar Observación — Equipo ${this.escapeHtml(m.codigo_equipo)}`
+        : `↳ Nuevo Seguimiento para Equipo ${this.escapeHtml(m.codigo_equipo)}`;
 
     return `
       <div class="modal-backdrop" id="modal-followup-backdrop">
         <div class="modal-card">
           <div class="section-header${isResolveMode ? ' modal-header-resolved' : ''}">
-            <h3 class="section-title">${
-              isResolveMode
-                ? `✅ Levantar Observación — Equipo ${this.escapeHtml(m.codigo_equipo)}`
-                : `↳ Nuevo Seguimiento para Equipo ${this.escapeHtml(m.codigo_equipo)}`
-            }</h3>
-            <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-close-followup">
+            <h3 class="section-title">${modalTitle}</h3>
+            <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-close-followup" ${isBusy ? 'disabled' : ''}>
               ✕ Cancelar
             </button>
           </div>
@@ -1797,7 +1923,7 @@ export class CapturaReporteView {
             <div class="field-group">
               <label class="field-label">Estado de la Observación</label>
               ${
-                isResolveMode
+                !isEditMode && isResolveMode
                   ? `<div class="resolved-state-readonly">✅ Observación Levantada</div>`
                   : `
                 <select id="modal-seg-estado" class="select-mine">
@@ -1807,6 +1933,11 @@ export class CapturaReporteView {
                   <option value="En monitoreo" ${m.estado_seguimiento === 'En monitoreo' ? 'selected' : ''}>
                     🛠️ En monitoreo
                   </option>
+                  ${
+                    isEditMode
+                      ? `<option value="Observación Levantada" ${isResolvedState ? 'selected' : ''}>✅ Observación Levantada</option>`
+                      : ''
+                  }
                 </select>
               `
               }
@@ -1875,14 +2006,18 @@ export class CapturaReporteView {
             >
               ${
                 isSaving
-                  ? isResolveMode
-                    ? '⏳ Guardando cierre...'
-                    : '⏳ Guardando seguimiento...'
+                  ? isEditMode
+                    ? '⏳ Guardando cambios...'
+                    : isResolveMode
+                      ? '⏳ Guardando cierre...'
+                      : '⏳ Guardando seguimiento...'
                   : isUploading
                     ? '⏳ Procesando fotos...'
-                    : isResolveMode
-                      ? '✅ Confirmar Observación Levantada'
-                      : '💾 Guardar Seguimiento (↳)'
+                    : isEditMode
+                      ? '💾 Guardar Cambios del Seguimiento'
+                      : isResolveMode
+                        ? '✅ Confirmar Observación Levantada'
+                        : '💾 Guardar Seguimiento (↳)'
               }
             </button>
           </div>
@@ -1894,11 +2029,17 @@ export class CapturaReporteView {
   renderDeleteConfirmModal() {
     if (!this.deleteConfirmModal) return '';
     const m = this.deleteConfirmModal;
+    const isFollowup = Boolean(m.isFollowup);
+    const segNum = m.segNumber || 1;
     return `
       <div class="modal-backdrop" id="modal-delete-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
         <div class="modal-card" style="max-width: 560px; border-color: #DC2626;">
           <div class="section-header" style="background: #7F1D1D; border-bottom-color: #F87171;">
-            <h3 class="section-title" id="delete-modal-title">🗑️ Confirmar Borrado de Fila Completa</h3>
+            <h3 class="section-title" id="delete-modal-title">${
+              isFollowup
+                ? `🗑️ Confirmar Borrado de Seguimiento #${segNum}`
+                : '🗑️ Confirmar Borrado de Fila Completa'
+            }</h3>
             <button type="button" class="btn-mine btn-sm-mine" id="btn-close-delete-modal" ${m.isDeleting ? 'disabled' : ''}>
               ✕ Cerrar
             </button>
@@ -1906,15 +2047,32 @@ export class CapturaReporteView {
 
           <div style="display:flex; flex-direction:column; gap:0.85rem;">
             <div class="alert-banner alert-error" style="margin:0;">
-              <span>⚠️ Esta acción eliminará toda la observación, sus fotos y sus <strong>${m.seguimientosCount}</strong> seguimiento(s) asociados en este dispositivo y en la nube.</span>
+              <span>${
+                isFollowup
+                  ? `⚠️ Esta acción eliminará únicamente el <strong>Seguimiento #${segNum}</strong> y su(s) <strong>${m.segFotosCount || 0}</strong> foto(s) asociada(s). La observación principal del equipo y los demás seguimientos se conservarán intactos.`
+                  : `⚠️ Esta acción eliminará toda la observación, sus fotos y sus <strong>${m.seguimientosCount}</strong> seguimiento(s) asociados en este dispositivo y en la nube.`
+              }</span>
             </div>
 
             <div class="field-group">
-              <div style="font-size:0.95rem;"><strong>Equipo:</strong> 🚜 ${this.escapeHtml(m.codigo_equipo)}</div>
-              <div style="font-size:0.95rem;"><strong>Fecha Inicial:</strong> 📅 ${this.escapeHtml(formatFechaDDMMYYYY(m.fecha))}</div>
-              <div style="font-size:0.92rem; margin-top:0.25rem;">
-                <strong>Observación:</strong> ${this.escapeHtml(m.observacion || '(Sin descripción)')}
-              </div>
+              ${
+                isFollowup
+                  ? `
+                <div style="font-size:0.95rem;"><strong>Equipo:</strong> 🚜 ${this.escapeHtml(m.codigo_equipo)}</div>
+                <div style="font-size:0.95rem;"><strong>Fecha del Seguimiento:</strong> 📅 ${this.escapeHtml(formatFechaDDMMYYYY(m.segFecha))}</div>
+                <div style="font-size:0.95rem;"><strong>Estado:</strong> ${this.escapeHtml(m.segEstado || 'Sigue observación')}</div>
+                <div style="font-size:0.92rem; margin-top:0.25rem;">
+                  <strong>Comentario:</strong> ${this.escapeHtml(m.segComentario || '(Sin comentario)')}
+                </div>
+              `
+                  : `
+                <div style="font-size:0.95rem;"><strong>Equipo:</strong> 🚜 ${this.escapeHtml(m.codigo_equipo)}</div>
+                <div style="font-size:0.95rem;"><strong>Fecha Inicial:</strong> 📅 ${this.escapeHtml(formatFechaDDMMYYYY(m.fecha))}</div>
+                <div style="font-size:0.92rem; margin-top:0.25rem;">
+                  <strong>Observación:</strong> ${this.escapeHtml(m.observacion || '(Sin descripción)')}
+                </div>
+              `
+              }
             </div>
 
             <div style="display:flex; justify-content:flex-end; gap:0.65rem; flex-wrap:wrap;">
@@ -1922,7 +2080,13 @@ export class CapturaReporteView {
                 ✕ Cancelar
               </button>
               <button type="button" class="btn-mine btn-danger" id="btn-confirm-delete-report" ${m.isDeleting ? 'disabled' : ''}>
-                ${m.isDeleting ? '⏳ Borrando...' : '🗑️ Sí, Borrar Fila Completa'}
+                ${
+                  m.isDeleting
+                    ? '⏳ Borrando...'
+                    : isFollowup
+                      ? `🗑️ Sí, Borrar Seguimiento #${segNum}`
+                      : '🗑️ Sí, Borrar Fila Completa'
+                }
               </button>
             </div>
           </div>
@@ -2424,6 +2588,7 @@ export class CapturaReporteView {
       this.followupModal = {
         mode,
         reporteId: rep.id,
+        editSegIndex: null,
         codigo_equipo: rep.codigo_equipo,
         fecha: getFechaHoyPeru(),
         estado_seguimiento:
@@ -2448,6 +2613,65 @@ export class CapturaReporteView {
     this.rootEl.querySelectorAll('[data-open-resolve-modal]').forEach((btn) => {
       btn.addEventListener('click', () => {
         openModalForReport(btn.getAttribute('data-open-resolve-modal'), 'levantada');
+      });
+    });
+
+    // Editar un seguimiento individual existente
+    this.rootEl.querySelectorAll('[data-edit-followup]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const repId = btn.getAttribute('data-edit-followup');
+        const segIdx = Number(btn.getAttribute('data-seg-idx'));
+        const rep = this.reportes.find((r) => r.id === repId);
+        const seg = rep && Array.isArray(rep.seguimientos) ? rep.seguimientos[segIdx] : null;
+        if (!rep || !seg) return;
+
+        this.followupModal = {
+          mode: this.isSegLevantada(seg) ? 'levantada' : 'seguimiento',
+          reporteId: rep.id,
+          editSegIndex: segIdx,
+          codigo_equipo: rep.codigo_equipo,
+          fecha: seg.fecha || getFechaHoyPeru(),
+          estado_seguimiento: seg.estado_seguimiento || 'Sigue observación',
+          comentario: seg.comentario || '',
+          fotos_locales: Array.isArray(seg.fotos_locales)
+            ? seg.fotos_locales.map((f) => ({ ...f }))
+            : [],
+          video_local: seg.video_local ? { ...seg.video_local } : null,
+          isUploadingPhotos: false,
+          uploadingCount: 0,
+          isSaving: false,
+          validationError: null
+        };
+        this.render();
+      });
+    });
+
+    // Abrir modal de confirmación para borrar solo un seguimiento individual
+    this.rootEl.querySelectorAll('[data-delete-followup]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const repId = btn.getAttribute('data-delete-followup');
+        const segIdx = Number(btn.getAttribute('data-seg-idx'));
+        const rep = this.reportes.find((r) => r.id === repId);
+        const seg = rep && Array.isArray(rep.seguimientos) ? rep.seguimientos[segIdx] : null;
+        if (!rep || !seg) return;
+
+        this.deleteConfirmModal = {
+          isFollowup: true,
+          reporteId: rep.id,
+          segIndex: segIdx,
+          segNumber: segIdx + 1,
+          codigo_equipo: rep.codigo_equipo,
+          segFecha: seg.fecha || rep.fecha,
+          segEstado: seg.estado_seguimiento || 'Sigue observación',
+          segComentario: seg.comentario || '',
+          segFotosCount: Array.isArray(seg.fotos_locales)
+            ? seg.fotos_locales.length
+            : Array.isArray(seg.fotos)
+              ? seg.fotos.length
+              : 0,
+          isDeleting: false
+        };
+        this.render();
       });
     });
 
@@ -2663,6 +2887,7 @@ export class CapturaReporteView {
     });
 
     this.rootEl.querySelector('#btn-close-followup')?.addEventListener('click', () => {
+      if (this.followupModal?.isSaving || this.followupModal?.isUploadingPhotos) return;
       this.followupModal = null;
       this.render();
     });
@@ -2684,6 +2909,15 @@ export class CapturaReporteView {
         }
       }
     });
+
+    const getNextFollowupPhotoIndex = () => {
+      const usedIndices = new Set(
+        (this.followupModal?.fotos_locales || []).map((item) => Number(item.indice) || 0)
+      );
+      let nextIdx = 1;
+      while (usedIndices.has(nextIdx)) nextIdx++;
+      return nextIdx;
+    };
 
     const modalSegFile = this.rootEl.querySelector('#modal-seg-file');
     this.rootEl.querySelector('#btn-modal-seg-photo')?.addEventListener('click', () => {
@@ -2708,7 +2942,7 @@ export class CapturaReporteView {
           const c = await compressPhotoFile(f, 'estandar');
           if (!this.followupModal) break;
           this.followupModal.fotos_locales.push({
-            indice: this.followupModal.fotos_locales.length + 1,
+            indice: getNextFollowupPhotoIndex(),
             ...c
           });
           this.followupModal.uploadingCount = Math.max(
@@ -2737,7 +2971,7 @@ export class CapturaReporteView {
         const c = await compressPhotoFile(sample, 'estandar');
         if (this.followupModal) {
           this.followupModal.fotos_locales.push({
-            indice: this.followupModal.fotos_locales.length + 1,
+            indice: getNextFollowupPhotoIndex(),
             ...c
           });
         }
@@ -2757,9 +2991,6 @@ export class CapturaReporteView {
         }
         const idx = Number(btn.getAttribute('data-remove-modal-seg-photo'));
         this.followupModal.fotos_locales.splice(idx, 1);
-        this.followupModal.fotos_locales.forEach((item, i) => {
-          item.indice = i + 1;
-        });
         this.render();
       });
     });
