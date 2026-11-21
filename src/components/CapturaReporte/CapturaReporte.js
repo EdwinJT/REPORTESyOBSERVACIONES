@@ -588,12 +588,14 @@ export class CapturaReporteView {
     if (!this.followupModal) return;
     if (this.followupModal.isSaving || this.followupModal.isUploadingPhotos) return;
 
-    const { reporteId, fecha, estado_seguimiento, comentario, fotos_locales, video_local } =
+    const { reporteId, fecha, estado_seguimiento, comentario, fotos_locales, video_local, mode } =
       this.followupModal;
+    const isResolveMode = mode === 'levantada';
 
     if (!comentario.trim()) {
-      this.followupModal.validationError =
-        'Debes colocar un comentario obligatorio. Caso contrario, el seguimiento no se guardará.';
+      this.followupModal.validationError = isResolveMode
+        ? 'Debes colocar un comentario obligatorio para levantar la observación. Caso contrario, no se guardará.'
+        : 'Debes colocar un comentario obligatorio. Caso contrario, el seguimiento no se guardará.';
       this.render();
       const ta = this.rootEl.querySelector('#modal-seg-comentario');
       if (ta) {
@@ -646,7 +648,7 @@ export class CapturaReporteView {
       if (pwaManager.getState().isOnline) {
         try {
           await syncQueue.processQueue({
-            triggerSource: 'Nuevo seguimiento agregado',
+            triggerSource: isResolveMode ? 'Observación levantada' : 'Nuevo seguimiento agregado',
             forceManual: true,
             targetReportId: reporte.id,
             perFileDelayMs: 25
@@ -660,7 +662,9 @@ export class CapturaReporteView {
       await this.reloadData();
       this.setBanner(
         'success',
-        `Seguimiento (↳) agregado al reporte de ${reporte.codigo_equipo}.`
+        isResolveMode
+          ? `Observación levantada registrada en el equipo ${reporte.codigo_equipo}.`
+          : `Seguimiento (↳) agregado al reporte de ${reporte.codigo_equipo}.`
       );
     } finally {
       if (this.followupModal) {
@@ -1017,9 +1021,6 @@ export class CapturaReporteView {
                           <option value="Observación controlada" ${extra.estado_seguimiento === 'Observación controlada' ? 'selected' : ''}>
                             🛠️ En monitoreo / controlada
                           </option>
-                          <option value="Levantada" ${extra.estado_seguimiento === 'Levantada' ? 'selected' : ''}>
-                            ✅ Levantada / corregida
-                          </option>
                         </select>
                       </div>
                     </div>
@@ -1153,6 +1154,8 @@ export class CapturaReporteView {
 
   renderTableRow(rep, repIdx = 0) {
     const seguimientos = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
+    const isSegLevantada = (s) => String(s?.estado_seguimiento || '').toLowerCase().includes('levantada');
+    const isReportLevantada = seguimientos.some((s) => isSegLevantada(s));
     const totalRows = 1 + seguimientos.length;
     const groupStripeClass = repIdx % 2 === 1 ? 'report-group-even' : 'report-group-odd';
     const initialRowClasses = `report-row-initial ${groupStripeClass}${seguimientos.length === 0 ? ' report-row-last' : ''}`;
@@ -1302,7 +1305,7 @@ export class CapturaReporteView {
               </div>
               <div style="font-size:0.92rem;">${this.escapeHtml(rep.observacion)}</div>
             </div>
-            <div style="margin-top:0.45rem;">
+            <div style="margin-top:0.45rem; display:flex; flex-wrap:wrap; gap:0.4rem; align-items:center;">
               <button
                 type="button"
                 class="btn-mine btn-sm-mine"
@@ -1310,6 +1313,19 @@ export class CapturaReporteView {
               >
                 + Agregar Seguimiento (↳)
               </button>
+              ${
+                !isReportLevantada
+                  ? `
+                <button
+                  type="button"
+                  class="btn-mine btn-sm-mine btn-success"
+                  data-open-resolve-modal="${this.escapeHtml(rep.id)}"
+                >
+                  ✅ Observación Levantada
+                </button>
+              `
+                  : `<span class="badge badge-resolved">✅ Observación Levantada</span>`
+              }
             </div>
           </div>
         </td>
@@ -1337,6 +1353,9 @@ export class CapturaReporteView {
     const followupRowsHtml = seguimientos
       .map((seg, sIdx) => {
         const isLastSeg = sIdx === seguimientos.length - 1;
+        const isResolvedSeg = isSegLevantada(seg);
+        const slotClass = isResolvedSeg ? 'slot-followup slot-resolved' : 'slot-followup';
+        const labelColor = isResolvedSeg ? '#15803d' : 'var(--accent-amber)';
         const segRowClasses = `report-row-followup ${groupStripeClass}${isLastSeg ? ' report-row-last' : ''}`;
         const segFotos = seg.fotos_locales || [];
         const pesoSeg = segFotos.reduce((acc, f) => acc + (f.peso_bytes || 0), 0);
@@ -1345,20 +1364,24 @@ export class CapturaReporteView {
       <tr class="${segRowClasses}" data-report-id="${this.escapeHtml(rep.id)}" data-seg-row="${sIdx}">
         <!-- COL 2: FECHA SEGUIMIENTO #${sIdx + 1} -->
         <td class="report-slot-cell">
-          <div class="slot-followup">
+          <div class="${slotClass}">
             <div>
-              <div style="font-size:0.76rem; color:var(--accent-amber); font-weight:800;">↳ Seguimiento #${sIdx + 1}</div>
+              <div style="font-size:0.76rem; color:${labelColor}; font-weight:800;">${
+                isResolvedSeg ? `↳ ✅ Levantada (#${sIdx + 1})` : `↳ Seguimiento #${sIdx + 1}`
+              }</div>
               <div style="font-size:0.98rem; font-weight:800; margin-top:0.2rem; white-space:nowrap;">${this.escapeHtml(seg.fecha)}</div>
             </div>
-            <div style="font-size:0.74rem; color:var(--text-muted);">Fecha Seg.</div>
+            <div style="font-size:0.74rem; color:var(--text-muted);">${isResolvedSeg ? 'Fecha Cierre' : 'Fecha Seg.'}</div>
           </div>
         </td>
 
         <!-- COL 3: VISTA PREVIA SEGUIMIENTO #${sIdx + 1} -->
         <td class="report-slot-cell">
-          <div class="slot-followup">
-            <div style="font-size:0.75rem; color:var(--accent-amber); font-weight:700; margin-bottom:0.25rem;">
-              ↳ Vista Seg. #${sIdx + 1} (${segFotos.length} foto(s)${seg.video_local ? ' + 1 video' : ''})
+          <div class="${slotClass}">
+            <div style="font-size:0.75rem; color:${labelColor}; font-weight:700; margin-bottom:0.25rem;">
+              ${
+                isResolvedSeg ? `↳ Vista Cierre #${sIdx + 1}` : `↳ Vista Seg. #${sIdx + 1}`
+              } (${segFotos.length} foto(s)${seg.video_local ? ' + 1 video' : ''})
             </div>
             <div class="preview-strip">
               ${
@@ -1386,9 +1409,11 @@ export class CapturaReporteView {
 
         <!-- COL 4: MULTIMEDIA Y ACCIONES SEGUIMIENTO #${sIdx + 1} -->
         <td class="report-slot-cell">
-          <div class="slot-followup">
-            <div style="font-size:0.76rem; font-weight:700; color:var(--accent-amber);">
-              ↳ Archivos Seg. #${sIdx + 1} (${formatBytes(pesoSeg)})
+          <div class="${slotClass}">
+            <div style="font-size:0.76rem; font-weight:700; color:${labelColor};">
+              ${
+                isResolvedSeg ? `↳ Archivos Cierre #${sIdx + 1}` : `↳ Archivos Seg. #${sIdx + 1}`
+              } (${formatBytes(pesoSeg)})
             </div>
             <div style="display:flex; flex-wrap:wrap; gap:0.4rem; margin-top:0.35rem;">
               <input
@@ -1420,17 +1445,19 @@ export class CapturaReporteView {
 
         <!-- COL 6: COMENTARIO POSTERIOR SEGUIMIENTO #${sIdx + 1} -->
         <td class="report-slot-cell">
-          <div class="slot-followup">
+          <div class="${slotClass}">
             <div>
-              <span class="badge badge-media" style="margin-bottom:0.3rem;">
-                ↳ ⚠️ ${this.escapeHtml(seg.estado_seguimiento || 'Sigue observación')}
-              </span>
+              ${
+                isResolvedSeg
+                  ? `<span class="badge badge-resolved" style="margin-bottom:0.3rem;">↳ ✅ Observación Levantada</span>`
+                  : `<span class="badge badge-media" style="margin-bottom:0.3rem;">↳ ⚠️ ${this.escapeHtml(seg.estado_seguimiento || 'Sigue observación')}</span>`
+              }
               <div style="font-size:0.9rem; margin-top:0.2rem;">
                 ${this.escapeHtml(seg.comentario)}
               </div>
             </div>
             <div style="font-size:0.73rem; color:var(--text-muted);">
-              Comentario posterior #${sIdx + 1}
+              ${isResolvedSeg ? `Cierre / Levantamiento (#${sIdx + 1})` : `Comentario posterior #${sIdx + 1}`}
             </div>
           </div>
         </td>
@@ -1518,11 +1545,17 @@ export class CapturaReporteView {
       `
       : '';
 
+    const isResolveMode = m.mode === 'levantada';
+
     return `
       <div class="modal-backdrop" id="modal-followup-backdrop">
         <div class="modal-card">
-          <div class="section-header">
-            <h3 class="section-title">↳ Nuevo Seguimiento para Equipo ${this.escapeHtml(m.codigo_equipo)}</h3>
+          <div class="section-header${isResolveMode ? ' modal-header-resolved' : ''}">
+            <h3 class="section-title">${
+              isResolveMode
+                ? `✅ Levantar Observación — Equipo ${this.escapeHtml(m.codigo_equipo)}`
+                : `↳ Nuevo Seguimiento para Equipo ${this.escapeHtml(m.codigo_equipo)}`
+            }</h3>
             <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-close-followup">
               ✕ Cancelar
             </button>
@@ -1530,36 +1563,45 @@ export class CapturaReporteView {
 
           <div class="form-grid">
             <div class="field-group">
-              <label class="field-label">Fecha del Seguimiento (America/Lima)</label>
+              <label class="field-label">${
+                isResolveMode ? 'Fecha de Levantamiento (America/Lima)' : 'Fecha del Seguimiento (America/Lima)'
+              }</label>
               <input type="date" id="modal-seg-fecha" class="input-mine" value="${this.escapeHtml(m.fecha)}" />
             </div>
 
             <div class="field-group">
               <label class="field-label">Estado de la Observación</label>
-              <select id="modal-seg-estado" class="select-mine">
-                <option value="Sigue observación" ${m.estado_seguimiento === 'Sigue observación' ? 'selected' : ''}>
-                  ⚠️ Sigue observación
-                </option>
-                <option value="En monitoreo" ${m.estado_seguimiento === 'En monitoreo' ? 'selected' : ''}>
-                  🛠️ En monitoreo
-                </option>
-                <option value="Levantada" ${m.estado_seguimiento === 'Levantada' ? 'selected' : ''}>
-                  ✅ Observación levantada
-                </option>
-              </select>
+              ${
+                isResolveMode
+                  ? `<div class="resolved-state-readonly">✅ Observación Levantada</div>`
+                  : `
+                <select id="modal-seg-estado" class="select-mine">
+                  <option value="Sigue observación" ${m.estado_seguimiento === 'Sigue observación' ? 'selected' : ''}>
+                    ⚠️ Sigue observación
+                  </option>
+                  <option value="En monitoreo" ${m.estado_seguimiento === 'En monitoreo' ? 'selected' : ''}>
+                    🛠️ En monitoreo
+                  </option>
+                </select>
+              `
+              }
             </div>
           </div>
 
           <div class="field-group" style="margin-top:0.85rem;">
             <label class="field-label" for="modal-seg-comentario">
-              <span>Comentario Posterior * <span class="required-comment-hint">(Obligatorio — sin comentario no se guardará)</span></span>
+              <span>${isResolveMode ? 'Comentario de Levantamiento / Cierre *' : 'Comentario Posterior *'} <span class="required-comment-hint">(Obligatorio — sin comentario no se guardará)</span></span>
             </label>
             <textarea
               id="modal-seg-comentario"
               required
               aria-invalid="${m.validationError ? 'true' : 'false'}"
               class="textarea-mine${m.validationError ? ' field-error-input' : ''}"
-              placeholder="Describe la evolución de la observación o el trabajo realizado..."
+              placeholder="${
+                isResolveMode
+                  ? 'Describe la corrección o trabajo realizado para levantar la observación...'
+                  : 'Describe la evolución de la observación o el trabajo realizado...'
+              }"
             >${this.escapeHtml(m.comentario)}</textarea>
             ${
               m.validationError
@@ -1570,7 +1612,7 @@ export class CapturaReporteView {
 
           <div class="media-capture-box">
             <div class="field-label" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.45rem; margin-bottom:0.55rem;">
-              <span>Evidencia del Seguimiento (${photoCount}/5 fotos)</span>
+              <span>${isResolveMode ? 'Evidencia del Levantamiento' : 'Evidencia del Seguimiento'} (${photoCount}/5 fotos)</span>
               ${statusPillHtml}
             </div>
             <input type="file" id="modal-seg-file" accept="image/*" multiple style="display:none" />
@@ -1602,16 +1644,20 @@ export class CapturaReporteView {
           <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-top:1rem;">
             <button
               type="button"
-              class="btn-mine btn-primary"
+              class="btn-mine ${isResolveMode ? 'btn-success' : 'btn-primary'}"
               id="btn-save-followup"
               ${isBusy ? 'disabled' : ''}
             >
               ${
                 isSaving
-                  ? '⏳ Guardando seguimiento...'
+                  ? isResolveMode
+                    ? '⏳ Guardando cierre...'
+                    : '⏳ Guardando seguimiento...'
                   : isUploading
                     ? '⏳ Procesando fotos...'
-                    : '💾 Guardar Seguimiento (↳)'
+                    : isResolveMode
+                      ? '✅ Confirmar Observación Levantada'
+                      : '💾 Guardar Seguimiento (↳)'
               }
             </button>
           </div>
@@ -1982,26 +2028,37 @@ export class CapturaReporteView {
       });
     });
 
-    // Abrir modal "+ Agregar Seguimiento (↳)"
+    // Abrir modal "+ Agregar Seguimiento (↳)" o "✅ Observación Levantada"
+    const openModalForReport = (repId, mode) => {
+      const rep = this.reportes.find((r) => r.id === repId);
+      if (!rep) return;
+      this.followupModal = {
+        mode,
+        reporteId: rep.id,
+        codigo_equipo: rep.codigo_equipo,
+        fecha: getFechaHoyPeru(),
+        estado_seguimiento:
+          mode === 'levantada' ? 'Observación Levantada' : 'Sigue observación',
+        comentario: '',
+        fotos_locales: [],
+        video_local: null,
+        isUploadingPhotos: false,
+        uploadingCount: 0,
+        isSaving: false,
+        validationError: null
+      };
+      this.render();
+    };
+
     this.rootEl.querySelectorAll('[data-open-followup-modal]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const repId = btn.getAttribute('data-open-followup-modal');
-        const rep = this.reportes.find((r) => r.id === repId);
-        if (!rep) return;
-        this.followupModal = {
-          reporteId: rep.id,
-          codigo_equipo: rep.codigo_equipo,
-          fecha: getFechaHoyPeru(),
-          estado_seguimiento: 'Sigue observación',
-          comentario: '',
-          fotos_locales: [],
-          video_local: null,
-          isUploadingPhotos: false,
-          uploadingCount: 0,
-          isSaving: false,
-          validationError: null
-        };
-        this.render();
+        openModalForReport(btn.getAttribute('data-open-followup-modal'), 'seguimiento');
+      });
+    });
+
+    this.rootEl.querySelectorAll('[data-open-resolve-modal]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        openModalForReport(btn.getAttribute('data-open-resolve-modal'), 'levantada');
       });
     });
 
