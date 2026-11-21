@@ -26,9 +26,10 @@ import { pwaManager } from '../../services/pwaManager.js';
 import { syncQueue } from '../../services/syncQueue.js';
 
 export class CapturaReporteView {
-  constructor(rootEl, { onStatsChange } = {}) {
+  constructor(rootEl, { onStatsChange, initialTableTab = 'activas', onTableTabChange } = {}) {
     this.rootEl = rootEl;
     this.onStatsChange = onStatsChange || (() => {});
+    this.onTableTabChange = onTableTabChange || (() => {});
 
     // Estado de datos persistidos
     this.equipos = [];
@@ -37,6 +38,7 @@ export class CapturaReporteView {
 
     // Filtro activo en Cuadro de Equipos ("TODOS" o código específico)
     this.filtroEquipo = 'TODOS';
+    this.vistaTabla = initialTableTab === 'levantadas' ? 'levantadas' : 'activas';
 
     // Estado del formulario "Nuevo Reporte"
     this.form = {
@@ -84,6 +86,48 @@ export class CapturaReporteView {
     const url = URL.createObjectURL(blob);
     this.objectUrls.push(url);
     return url;
+  }
+
+  isSegLevantada(seg) {
+    return String(seg?.estado_seguimiento || '')
+      .toLowerCase()
+      .includes('levantada');
+  }
+
+  isReportLevantada(rep) {
+    return (
+      Array.isArray(rep?.seguimientos) &&
+      rep.seguimientos.some((s) => this.isSegLevantada(s))
+    );
+  }
+
+  setVistaTabla(tab, { scrollToTable = false } = {}) {
+    const nextTab = tab === 'levantadas' ? 'levantadas' : 'activas';
+    this.vistaTabla = nextTab;
+    this.render();
+    if (scrollToTable) {
+      const tableSec = this.rootEl.querySelector('#section-tabla-principal');
+      if (tableSec) {
+        tableSec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  }
+
+  async _getWritableReport(reporteId) {
+    const localRep = await localDb.reportes.get(reporteId);
+    if (localRep) return localRep;
+    const fromView = this.reportes.find((r) => r.id === reporteId);
+    if (!fromView) return null;
+    return {
+      ...fromView,
+      seguimientos: Array.isArray(fromView.seguimientos) ? [...fromView.seguimientos] : [],
+      fotos_locales: Array.isArray(fromView.fotos_locales) ? [...fromView.fotos_locales] : [],
+      fotos_rutas: Array.isArray(fromView.fotos_rutas)
+        ? [...fromView.fotos_rutas]
+        : Array.isArray(fromView.fotos)
+          ? [...fromView.fotos]
+          : []
+    };
   }
 
   async hydrateRemoteSeguimientos(remSegs, localSegs = []) {
@@ -208,11 +252,25 @@ export class CapturaReporteView {
     }
 
     this.equipos = await getAllEquipments();
-    this.reportes = mergedReports.sort((a, b) => (b.creado_en || '').localeCompare(a.creado_en || ''));
+    this.reportes = mergedReports.sort((a, b) => {
+      const codeCmp = String(a.codigo_equipo || '').localeCompare(
+        String(b.codigo_equipo || ''),
+        'es',
+        { numeric: true, sensitivity: 'base' }
+      );
+      if (codeCmp !== 0) return codeCmp;
+      const dateCmp = String(b.fecha || '').localeCompare(String(a.fecha || ''));
+      if (dateCmp !== 0) return dateCmp;
+      return String(b.creado_en || '').localeCompare(String(a.creado_en || ''));
+    });
     const storageEst = await getStorageUsageEstimate();
     const pendientes = rawLocal.filter((r) => r.estado === 'pendiente' || r.estado === 'error').length;
+    const levantadasCount = this.reportes.filter((r) => this.isReportLevantada(r)).length;
+    const activasCount = this.reportes.length - levantadasCount;
     this.onStatsChange({
       totalReportes: this.reportes.length,
+      activasCount,
+      levantadasCount,
       pendientes,
       storageEst
     });
@@ -589,21 +647,8 @@ export class CapturaReporteView {
     this.render();
 
     try {
-      let reporte = await localDb.reportes.get(reporteId);
-      if (!reporte) {
-        const fromView = this.reportes.find((r) => r.id === reporteId);
-        if (!fromView) return;
-        reporte = {
-          ...fromView,
-          seguimientos: Array.isArray(fromView.seguimientos) ? [...fromView.seguimientos] : [],
-          fotos_locales: Array.isArray(fromView.fotos_locales) ? [...fromView.fotos_locales] : [],
-          fotos_rutas: Array.isArray(fromView.fotos_rutas)
-            ? [...fromView.fotos_rutas]
-            : Array.isArray(fromView.fotos)
-              ? [...fromView.fotos]
-              : []
-        };
-      }
+      const reporte = await this._getWritableReport(reporteId);
+      if (!reporte) return;
 
       if (!Array.isArray(reporte.seguimientos)) {
         reporte.seguimientos = [];
@@ -653,13 +698,60 @@ export class CapturaReporteView {
     }
   }
 
+  // Cambiar estado de una observación ya levantada y devolverla al Panel Principal
+  async handleReopenResolvedReport(reporteId, nuevoEstado = 'Sigue observación') {
+    const reporte = await this._getWritableReport(reporteId);
+    if (!reporte) return;
+
+    const estadoDestino = nuevoEstado === 'En monitoreo' ? 'En monitoreo' : 'Sigue observación';
+    if (!Array.isArray(reporte.seguimientos)) {
+      reporte.seguimientos = [];
+    }
+
+    reporte.seguimientos = reporte.seguimientos.map((seg) =>
+      this.isSegLevantada(seg)
+        ? { ...seg, estado_seguimiento: estadoDestino }
+        : seg
+    );
+
+    reporte.estado = 'pendiente';
+    reporte.sincronizado_en_nube_real = false;
+    reporte.ultimo_error = null;
+    reporte.actualizado_en = new Date().toISOString();
+    await localDb.reportes.put(reporte);
+
+    if (pwaManager.getState().isOnline) {
+      try {
+        await syncQueue.processQueue({
+          triggerSource: 'Reapertura de observación levantada',
+          forceManual: true,
+          targetReportId: reporte.id,
+          perFileDelayMs: 25
+        });
+      } catch {
+        // Permanece guardado en IndexedDB si hay corte momentáneo de red
+      }
+    }
+
+    await this.reloadData();
+    this.setBanner(
+      'success',
+      `Estado cambiado a "${estadoDestino}". La observación de ${reporte.codigo_equipo} volvió al Panel Principal.`
+    );
+  }
+
   render() {
     this.revokeAllUrls();
 
-    const reportesFiltrados =
+    const reportesPorEquipo =
       this.filtroEquipo === 'TODOS'
         ? this.reportes
         : this.reportes.filter((r) => r.codigo_equipo === this.filtroEquipo);
+
+    const reportesActivos = reportesPorEquipo.filter((r) => !this.isReportLevantada(r));
+    const reportesLevantados = reportesPorEquipo.filter((r) => this.isReportLevantada(r));
+    const reportesVisibles =
+      this.vistaTabla === 'levantadas' ? reportesLevantados : reportesActivos;
 
     const conteoPorEquipo = {};
     for (const r of this.reportes) {
@@ -1068,18 +1160,30 @@ export class CapturaReporteView {
         </section>
 
         <!-- 3. TABLA PRINCIPAL CON ORDEN DE LECTURA OPERATIVO -->
-        <section class="section-panel" aria-label="Tabla Principal con Orden de Lectura Operativo">
+        <section class="section-panel" id="section-tabla-principal" aria-label="Tabla Principal con Orden de Lectura Operativo">
           <div class="section-header">
             <div>
               <h2 class="section-title">
-                📊 3. Tabla Principal con Orden de Lectura Operativo (${
-                  this.filtroEquipo === 'TODOS'
-                    ? `Todos los equipos: ${reportesFiltrados.length}`
-                    : `Filtrado por equipo ${this.escapeHtml(this.filtroEquipo)}: ${reportesFiltrados.length}`
-                })
+                ${
+                  this.vistaTabla === 'levantadas'
+                    ? `✅ 3. Observaciones Levantadas (${
+                        this.filtroEquipo === 'TODOS'
+                          ? `Todos los equipos: ${reportesLevantados.length}`
+                          : `Equipo ${this.escapeHtml(this.filtroEquipo)}: ${reportesLevantados.length}`
+                      })`
+                    : `📊 3. Tabla Principal — Agrupada por Código de Equipo (${
+                        this.filtroEquipo === 'TODOS'
+                          ? `Todos los equipos: ${reportesActivos.length}`
+                          : `Filtrado por equipo ${this.escapeHtml(this.filtroEquipo)}: ${reportesActivos.length}`
+                      })`
+                }
               </h2>
               <p class="brand-subtitle">
-                Orden operativo: <strong>1. Equipo → 2. Fecha (Inicial / Seg.) → 3. Vista Previa (Inicial / Seg.) → 4. Observación Principal y Comentarios Posteriores → 5. Tipo / Prioridad → 6. Estado</strong>.
+                ${
+                  this.vistaTabla === 'levantadas'
+                    ? 'Historial de observaciones cerradas/levantadas. Puedes cambiar su estado para devolverlas al Panel Principal.'
+                    : 'Agrupadas por <strong>código de equipo</strong>. Orden operativo: <strong>1. Equipo → 2. Fecha (Inicial / Seg.) → 3. Vista Previa (Inicial / Seg.) → 4. Observación Principal y Comentarios Posteriores → 5. Tipo / Prioridad → 6. Estado</strong>.'
+                }
               </p>
             </div>
             ${
@@ -1091,6 +1195,29 @@ export class CapturaReporteView {
             `
                 : ''
             }
+          </div>
+
+          <div class="table-status-tabs" role="tablist" aria-label="Vista de observaciones activas vs levantadas">
+            <button
+              type="button"
+              role="tab"
+              aria-selected="${this.vistaTabla === 'activas'}"
+              class="table-status-tab-btn ${this.vistaTabla === 'activas' ? 'active' : ''}"
+              data-switch-table-tab="activas"
+            >
+              <span>📋 Panel Principal — Observaciones Activas</span>
+              <span class="chip-count">${reportesActivos.length}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected="${this.vistaTabla === 'levantadas'}"
+              class="table-status-tab-btn tab-levantadas ${this.vistaTabla === 'levantadas' ? 'active' : ''}"
+              data-switch-table-tab="levantadas"
+            >
+              <span>✅ Observaciones Levantadas</span>
+              <span class="chip-count">${reportesLevantados.length}</span>
+            </button>
           </div>
 
           <div class="table-responsive">
@@ -1107,15 +1234,19 @@ export class CapturaReporteView {
               </thead>
               <tbody>
                 ${
-                  reportesFiltrados.length === 0
+                  reportesVisibles.length === 0
                     ? `
                   <tr>
                     <td colspan="6" style="text-align:center; padding: 2rem; color: var(--text-muted);">
-                      No hay reportes registrados para el filtro seleccionado. Usa el panel superior para registrar uno nuevo.
+                      ${
+                        this.vistaTabla === 'levantadas'
+                          ? 'No hay observaciones levantadas para el filtro seleccionado.'
+                          : 'No hay observaciones activas pendientes para el filtro seleccionado. Usa el panel superior para registrar una nueva o revisa la pestaña "✅ Observaciones Levantadas".'
+                      }
                     </td>
                   </tr>
                 `
-                    : reportesFiltrados.map((rep, repIdx) => this.renderTableRow(rep, repIdx)).join('')
+                    : reportesVisibles.map((rep, repIdx) => this.renderTableRow(rep, repIdx)).join('')
                 }
               </tbody>
             </table>
@@ -1132,8 +1263,7 @@ export class CapturaReporteView {
 
   renderTableRow(rep, repIdx = 0) {
     const seguimientos = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
-    const isSegLevantada = (s) => String(s?.estado_seguimiento || '').toLowerCase().includes('levantada');
-    const isReportLevantada = seguimientos.some((s) => isSegLevantada(s));
+    const isReportLevantada = this.isReportLevantada(rep);
     const totalRows = 1 + seguimientos.length;
     const groupStripeClass = repIdx % 2 === 1 ? 'report-group-even' : 'report-group-odd';
     const initialRowClasses = `report-row-initial ${groupStripeClass}${seguimientos.length === 0 ? ' report-row-last' : ''}`;
@@ -1251,6 +1381,34 @@ export class CapturaReporteView {
                   : `<span class="badge badge-resolved">✅ Observación Levantada</span>`
               }
             </div>
+            ${
+              isReportLevantada
+                ? `
+              <div class="reopen-observation-box">
+                <label class="reopen-label" for="reopen-state-${this.escapeHtml(rep.id)}">
+                  ¿Reabrir o devolver al Panel Principal? Elige el nuevo estado:
+                </label>
+                <div class="reopen-controls-row">
+                  <select
+                    id="reopen-state-${this.escapeHtml(rep.id)}"
+                    class="select-mine select-sm-reopen"
+                    data-reopen-state-select="${this.escapeHtml(rep.id)}"
+                  >
+                    <option value="Sigue observación">⚠️ Sigue observación</option>
+                    <option value="En monitoreo">🛠️ En monitoreo</option>
+                  </select>
+                  <button
+                    type="button"
+                    class="btn-mine btn-sm-mine btn-primary"
+                    data-reopen-report-btn="${this.escapeHtml(rep.id)}"
+                  >
+                    ↩️ Cambiar Estado y Volver al Panel Principal
+                  </button>
+                </div>
+              </div>
+            `
+                : ''
+            }
           </div>
         </td>
 
@@ -1292,7 +1450,7 @@ export class CapturaReporteView {
     const followupRowsHtml = seguimientos
       .map((seg, sIdx) => {
         const isLastSeg = sIdx === seguimientos.length - 1;
-        const isResolvedSeg = isSegLevantada(seg);
+        const isResolvedSeg = this.isSegLevantada(seg);
         const slotClass = isResolvedSeg ? 'slot-followup slot-resolved' : 'slot-followup';
         const labelColor = isResolvedSeg ? '#15803d' : 'var(--accent-amber)';
         const segRowClasses = `report-row-followup ${groupStripeClass}${isLastSeg ? ' report-row-last' : ''}`;
@@ -1913,6 +2071,26 @@ export class CapturaReporteView {
     this.rootEl.querySelectorAll('[data-open-resolve-modal]').forEach((btn) => {
       btn.addEventListener('click', () => {
         openModalForReport(btn.getAttribute('data-open-resolve-modal'), 'levantada');
+      });
+    });
+
+    // Pestañas Panel Principal (Activas) vs Observaciones Levantadas
+    this.rootEl.querySelectorAll('[data-switch-table-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const nextTab = btn.getAttribute('data-switch-table-tab') === 'levantadas' ? 'levantadas' : 'activas';
+        this.vistaTabla = nextTab;
+        this.onTableTabChange(nextTab);
+        this.render();
+      });
+    });
+
+    // Cambiar estado de una observación levantada para devolverla al Panel Principal
+    this.rootEl.querySelectorAll('[data-reopen-report-btn]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const repId = btn.getAttribute('data-reopen-report-btn');
+        const sel = this.rootEl.querySelector(`[data-reopen-state-select="${repId}"]`);
+        const nuevoEstado = sel ? sel.value : 'Sigue observación';
+        this.handleReopenResolvedReport(repId, nuevoEstado);
       });
     });
 

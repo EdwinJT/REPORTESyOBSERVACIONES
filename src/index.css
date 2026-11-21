@@ -2447,5 +2447,154 @@ body.view-mode-ingenieria .operativo-only-inline {
 }
 
 body.view-mode-operativo .module-navbar {
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(3, 1fr);
+}
+
+/* ==========================================================================
+   PESTAÑAS TABLA PRINCIPAL (Activas vs Observaciones Levantadas)
+   Y CONTROLES DE CAMBIO DE ESTADO PARA VOLVER AL PANEL PRINCIPAL
+   ========================================================================== */
+
+.module-tab-btn.module-tab-levantadas.active {
+  background: #14532D;
+  color: #FFFFFF;
+  border-color: #22C55E;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.35);
+}
+
+.module-tab-btn.module-tab-levantadas.active .module-tab-badge {
+  background: #4ADE80;
+  color: #052E16;
+}
+
+.table-status-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-bottom: 0.9rem;
+}
+
+.table-status-tab-btn {
+  flex: 1 1 280px;
+  min-height: 48px;
+  padding: 0.55rem 0.95rem;
+  border-radius: 9px;
+  border: 2px solid var(--border-strong);
+  background: var(--bg-card);
+  color: var(--text-main);
+  font-size: 0.98rem;
+  font-weight: 900;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.55rem;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+
+.table-status-tab-btn:hover {
+  border-color: var(--stracon-orange);
+  background: #FFF2E5;
+  color: #091526;
+}
+
+.table-status-tab-btn.active {
+  background: var(--stracon-navy);
+  color: #FFFFFF;
+  border-color: var(--stracon-orange);
+  box-shadow: 0 0 0 3px rgba(242, 101, 34, 0.32);
+}
+
+.table-status-tab-btn.active .chip-count {
+  background: var(--stracon-orange-bright);
+  color: #091526;
+}
+
+.table-status-tab-btn.tab-levantadas.active {
+  background: #14532D;
+  color: #FFFFFF;
+  border-color: #22C55E;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.32);
+}
+
+.table-status-tab-btn.tab-levantadas.active .chip-count {
+  background: #4ADE80;
+  color: #052E16;
+}
+
+body.theme-night .table-status-tab-btn {
+  background: #13263B;
+  color: #F8FAFC;
+  border-color: #4B79A8;
+}
+
+body.theme-night .table-status-tab-btn:hover {
+  background: #1B3654;
+  border-color: var(--stracon-orange-bright);
+  color: #FFFFFF;
+}
+
+body.theme-night .table-status-tab-btn.active {
+  background: var(--stracon-navy-mid);
+  color: #FFFFFF;
+  border-color: var(--stracon-orange-bright);
+}
+
+body.theme-night .table-status-tab-btn.tab-levantadas.active {
+  background: #064E3B;
+  color: #ECFDF5;
+  border-color: #4ADE80;
+}
+
+.reopen-observation-box {
+  margin-top: 0.65rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: 8px;
+  background: #F0FDF4;
+  border: 2px solid #16A34A;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.reopen-label {
+  font-size: 0.84rem;
+  font-weight: 900;
+  color: #052E16;
+}
+
+.reopen-controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+}
+
+.select-mine.select-sm-reopen {
+  min-height: 40px;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.92rem;
+  flex: 1 1 180px;
+}
+
+body.theme-night .reopen-observation-box {
+  background: #0A2717;
+  border-color: #22C55E;
+}
+
+body.theme-night .reopen-label {
+  color: #DCFCE7;
+}
+
+@media (max-width: 768px) {
+  .table-status-tab-btn {
+    flex: 1 1 100%;
+    min-height: 52px;
+    font-size: 1.04rem;
+  }
+
+  .select-mine.select-sm-reopen {
+    min-height: 44px;
+    font-size: 1rem;
+  }
 }

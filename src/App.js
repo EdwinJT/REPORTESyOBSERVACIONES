@@ -41,13 +41,15 @@ export class AppController {
     this.mountEl = mountEl;
     this.isNightTheme = false; // Por defecto inicia en Modo Claridad Industrial
     this.zoomLevel = 0.82; // Vista panorámica por defecto (82%)
-    this.viewMode = 'operativo'; // 'operativo' (2 pestañas limpias) | 'ingenieria' (6 módulos M1..M6)
+    this.viewMode = 'operativo'; // 'operativo' (pestañas limpias) | 'ingenieria' (módulos M1..M6 + Levantadas)
     this.activeModule = 'm1'; // En modo operativo inicia directo en M1 (Registrar Reporte)
+    this.m1TableTab = 'activas'; // 'activas' | 'levantadas'
     this.showQuickProfileModal = false;
     this.pwaBanner = null;
     this.currentView = null;
     this.stats = {
       totalReportes: 0,
+      levantadasCount: 0,
       pendientes: 0,
       sincronizados: 0,
       unificadosTotal: 0,
@@ -271,7 +273,7 @@ export class AppController {
       <nav class="module-navbar" aria-label="Navegación de Módulos">
         <button
           type="button"
-          class="module-tab-btn ${this.activeModule === 'm1' ? 'active' : ''}"
+          class="module-tab-btn ${this.activeModule === 'm1' && this.m1TableTab !== 'levantadas' ? 'active' : ''}"
           id="tab-btn-m1"
         >
           <span id="tab-title-m1">${
@@ -284,6 +286,21 @@ export class AppController {
               ? 'Cámara • Equipos • Tabla Operativa (↳)'
               : 'Captura + Seguimientos (↳)'
           }</span>
+        </button>
+
+        <button
+          type="button"
+          class="module-tab-btn module-tab-levantadas ${this.activeModule === 'm1' && this.m1TableTab === 'levantadas' ? 'active' : ''}"
+          id="tab-btn-levantadas"
+        >
+          <span id="tab-title-levantadas">${
+            isOperativo
+              ? '✅ Observaciones Levantadas'
+              : '✅ M1-B — Observaciones Levantadas'
+          }</span>
+          <span class="module-tab-badge" id="tab-badge-levantadas">${
+            this.stats.levantadasCount || 0
+          } cerradas • Cambiar estado</span>
         </button>
 
         <button
@@ -358,6 +375,13 @@ export class AppController {
     const tabTitleM1 = this.mountEl.querySelector('#tab-title-m1');
     const tabBadgeM1 = this.mountEl.querySelector('#tab-badge-m1');
     const tabTitleM6 = this.mountEl.querySelector('#tab-title-m6');
+    const tabTitleLevantadas = this.mountEl.querySelector('#tab-title-levantadas');
+
+    if (tabTitleLevantadas) {
+      tabTitleLevantadas.textContent = isOperativo
+        ? '✅ Observaciones Levantadas'
+        : '✅ M1-B — Observaciones Levantadas';
+    }
 
     if (badgeMode) {
       badgeMode.style.background = isOperativo ? '#22c55e' : '#f59e0b';
@@ -638,7 +662,7 @@ export class AppController {
     });
   }
 
-  async refreshGlobalStats() {
+  async refreshGlobalStats(overrideStats = null) {
     const reportes = await localDb.reportes.toArray();
     const storageEst = await getStorageUsageEstimate();
     const metrics = calculateAllReportsStorageMetrics(reportes);
@@ -646,22 +670,74 @@ export class AppController {
     const sincronizados = reportes.filter((r) => r.estado === 'sincronizado').length;
 
     const cloudSnap = supabase.getCloudSnapshot();
-    const unifiedIds = new Set([
-      ...reportes.map((r) => r.id),
-      ...(cloudSnap.reportesCloud || []).map((r) => r.id)
-    ]);
+    const byId = new Map();
+    for (const cr of cloudSnap.reportesCloud || []) {
+      if (cr?.id) byId.set(cr.id, cr);
+    }
+    for (const lr of reportes) {
+      if (lr?.id) byId.set(lr.id, lr);
+    }
+
+    const isLev = (rep) =>
+      Array.isArray(rep?.seguimientos) &&
+      rep.seguimientos.some((s) =>
+        String(s?.estado_seguimiento || '')
+          .toLowerCase()
+          .includes('levantada')
+      );
+    const computedLevantadas = Array.from(byId.values()).filter(isLev).length;
+
+    const resolvedLevantadas =
+      overrideStats && typeof overrideStats.levantadasCount === 'number'
+        ? overrideStats.levantadasCount
+        : Math.max(computedLevantadas, this.stats?.levantadasCount || 0);
 
     this.stats = {
       totalReportes: reportes.length,
+      levantadasCount: resolvedLevantadas,
       pendientes,
       sincronizados,
-      unificadosTotal: unifiedIds.size,
+      unificadosTotal: byId.size,
       indexedDbBytes: metrics.totalIndexedDbMediaBytes,
       storageEst
     };
   }
 
-  async switchModule(moduleId) {
+  updateActiveModuleTabClasses() {
+    const tabM1 = this.mountEl.querySelector('#tab-btn-m1');
+    const tabLevantadas = this.mountEl.querySelector('#tab-btn-levantadas');
+    const tabM2 = this.mountEl.querySelector('#tab-btn-m2');
+    const tabM3 = this.mountEl.querySelector('#tab-btn-m3');
+    const tabM4 = this.mountEl.querySelector('#tab-btn-m4');
+    const tabM5 = this.mountEl.querySelector('#tab-btn-m5');
+    const tabM6 = this.mountEl.querySelector('#tab-btn-m6');
+
+    tabM1?.classList.toggle('active', this.activeModule === 'm1' && this.m1TableTab !== 'levantadas');
+    tabLevantadas?.classList.toggle('active', this.activeModule === 'm1' && this.m1TableTab === 'levantadas');
+    tabM2?.classList.toggle('active', this.activeModule === 'm2');
+    tabM3?.classList.toggle('active', this.activeModule === 'm3');
+    tabM4?.classList.toggle('active', this.activeModule === 'm4');
+    tabM5?.classList.toggle('active', this.activeModule === 'm5');
+    tabM6?.classList.toggle('active', this.activeModule === 'm6');
+  }
+
+  async switchModule(moduleId, { tableTab = null, scrollToTable = false } = {}) {
+    if (moduleId === 'm1' && tableTab) {
+      this.m1TableTab = tableTab === 'levantadas' ? 'levantadas' : 'activas';
+    }
+
+    // Cambio rápido entre Panel Principal Activo y Observaciones Levantadas dentro de M1 sin perder datos escritos
+    if (
+      moduleId === 'm1' &&
+      this.activeModule === 'm1' &&
+      this.currentView &&
+      typeof this.currentView.setVistaTabla === 'function'
+    ) {
+      this.currentView.setVistaTabla(this.m1TableTab, { scrollToTable });
+      this.updateActiveModuleTabClasses();
+      return;
+    }
+
     if (this.currentView && typeof this.currentView.destroy === 'function') {
       this.currentView.destroy();
     }
@@ -671,22 +747,9 @@ export class AppController {
     if (!viewContainer) return;
 
     const isOperativo = this.viewMode === 'operativo';
-
-    // Actualizar pestañas activas y subtítulo
-    const tabM1 = this.mountEl.querySelector('#tab-btn-m1');
-    const tabM2 = this.mountEl.querySelector('#tab-btn-m2');
-    const tabM3 = this.mountEl.querySelector('#tab-btn-m3');
-    const tabM4 = this.mountEl.querySelector('#tab-btn-m4');
-    const tabM5 = this.mountEl.querySelector('#tab-btn-m5');
-    const tabM6 = this.mountEl.querySelector('#tab-btn-m6');
     const subtitle = this.mountEl.querySelector('#topbar-module-subtitle');
 
-    tabM1?.classList.toggle('active', moduleId === 'm1');
-    tabM2?.classList.toggle('active', moduleId === 'm2');
-    tabM3?.classList.toggle('active', moduleId === 'm3');
-    tabM4?.classList.toggle('active', moduleId === 'm4');
-    tabM5?.classList.toggle('active', moduleId === 'm5');
-    tabM6?.classList.toggle('active', moduleId === 'm6');
+    this.updateActiveModuleTabClasses();
 
     if (subtitle) {
       if (isOperativo) {
@@ -720,12 +783,23 @@ export class AppController {
 
     if (moduleId === 'm1') {
       this.currentView = new CapturaReporteView(viewContainer, {
-        onStatsChange: async () => {
-          await this.refreshGlobalStats();
+        initialTableTab: this.m1TableTab,
+        onTableTabChange: (tab) => {
+          this.m1TableTab = tab === 'levantadas' ? 'levantadas' : 'activas';
+          this.updateActiveModuleTabClasses();
+        },
+        onStatsChange: async (m1Stats) => {
+          await this.refreshGlobalStats(m1Stats);
           this.updateTopbarStats();
         }
       });
       await this.currentView.init();
+      if (scrollToTable) {
+        viewContainer.querySelector('#section-tabla-principal')?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        });
+      }
     } else if (moduleId === 'm2') {
       this.currentView = new MisReportesView(viewContainer, {
         onStatsChange: async () => {
@@ -806,6 +880,7 @@ export class AppController {
     const pendPill = this.mountEl.querySelector('#pill-pending');
     const syncIcon = this.mountEl.querySelector('#stat-sync-icon');
     const storEl = this.mountEl.querySelector('#stat-storage');
+    const tabBadgeLevantadas = this.mountEl.querySelector('#tab-badge-levantadas');
     const tabBadgeM2 = this.mountEl.querySelector('#tab-badge-m2');
     const tabBadgeM3 = this.mountEl.querySelector('#tab-badge-m3');
     const tabBadgeM4 = this.mountEl.querySelector('#tab-badge-m4');
@@ -849,6 +924,9 @@ export class AppController {
     }
     if (storEl) {
       storEl.textContent = `${formatBytes(this.stats.indexedDbBytes)} (Cuota: ${this.stats.storageEst.usageMB} MB)`;
+    }
+    if (tabBadgeLevantadas) {
+      tabBadgeLevantadas.textContent = `${this.stats.levantadasCount || 0} cerradas • Cambiar estado`;
     }
     if (tabBadgeM2) {
       tabBadgeM2.textContent = `${this.stats.totalReportes} guardados (${formatBytes(this.stats.indexedDbBytes)})`;
@@ -896,7 +974,11 @@ export class AppController {
     });
 
     this.mountEl.querySelector('#tab-btn-m1')?.addEventListener('click', () => {
-      this.switchModule('m1');
+      this.switchModule('m1', { tableTab: 'activas' });
+    });
+
+    this.mountEl.querySelector('#tab-btn-levantadas')?.addEventListener('click', () => {
+      this.switchModule('m1', { tableTab: 'levantadas', scrollToTable: true });
     });
 
     this.mountEl.querySelector('#tab-btn-m2')?.addEventListener('click', () => {
