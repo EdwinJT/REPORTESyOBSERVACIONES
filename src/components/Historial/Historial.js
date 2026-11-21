@@ -171,17 +171,31 @@ export class HistorialModuleView {
    * 2. Sincroniza automáticamente los códigos de equipo hacia `localDb.equipos` (`origen: 'nube'`).
    */
   async reloadUnifiedHistory(notifyTopbar = false) {
-    const localArr = await localDb.reportes.toArray();
-    this.localReports = localArr;
+    const rawLocal = await localDb.reportes.toArray();
 
     // Consultar public.reportes en Supabase (respeta RLS: si hay sesión devuelve filas; si no hay sesión o para vista completa usamos snapshot/select)
     const selectRes = await supabase.from('reportes').select();
     const cloudSnap = supabase.getCloudSnapshot();
-    const cloudArr =
+    const rawCloud =
       Array.isArray(selectRes.data) && selectRes.data.length > 0
         ? selectRes.data
         : cloudSnap.reportesCloud || [];
-    this.cloudReports = cloudArr;
+
+    const checkDeleted = (id, obs) =>
+      (typeof supabase.isReportDeleted === 'function' && supabase.isReportDeleted(id)) ||
+      obs === '__REPORTE_ELIMINADO__';
+
+    const filteredLocal = [];
+    for (const loc of rawLocal) {
+      if (checkDeleted(loc.id, loc.observacion)) {
+        await localDb.reportes.delete(loc.id);
+        continue;
+      }
+      filteredLocal.push(loc);
+    }
+
+    this.localReports = filteredLocal;
+    this.cloudReports = rawCloud.filter((r) => !checkDeleted(r.id, r.observacion));
 
     // Sincronizar códigos de equipo creados en la nube con el catálogo local (M6 requisito 2)
     this.catalogSummary = await syncEquipmentsFromCloudReports(this.cloudReports, this.localReports);

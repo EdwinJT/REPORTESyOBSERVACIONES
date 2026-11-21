@@ -11,6 +11,42 @@ const STORAGE_CONFIG_KEY = 'mineria_pwa_supabase_config_v1';
 const STORAGE_SESSION_KEY = 'mineria_pwa_supabase_session_v1';
 const STORAGE_CLOUD_TABLE_KEY = 'mineria_pwa_supabase_cloud_reportes_v1';
 const STORAGE_CLOUD_BUCKET_KEY = 'mineria_pwa_supabase_cloud_bucket_fotos_v1';
+const STORAGE_DELETED_IDS_KEY = 'mineria_pwa_deleted_report_ids_v1';
+const DELETED_REPORT_MARKER = '__REPORTE_ELIMINADO__';
+
+function readDeletedReportIds() {
+  try {
+    const raw = localStorage.getItem(STORAGE_DELETED_IDS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function markReportIdDeleted(id) {
+  if (!id) return;
+  try {
+    const set = readDeletedReportIds();
+    set.add(id);
+    localStorage.setItem(STORAGE_DELETED_IDS_KEY, JSON.stringify(Array.from(set)));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function isDeletedCloudRow(row) {
+  if (!row || typeof row !== 'object') return false;
+  if (row.observacion === DELETED_REPORT_MARKER) return true;
+  if (
+    Array.isArray(row.seguimientos) &&
+    row.seguimientos.some((s) => s?.estado_seguimiento === '__ELIMINADO__')
+  ) {
+    return true;
+  }
+  return false;
+}
 
 /**
  * Lee variables de entorno de Vite si existen, o configuración personalizada guardada localmente.
@@ -841,13 +877,21 @@ class SupabaseResilientClient {
             if (res.ok) {
               const remoteRows = await res.json();
               if (Array.isArray(remoteRows)) {
-                const normalizedRemote = remoteRows.map((rem) => ({
-                  ...rem,
-                  cloud_mode: 'supabase-cloud-postgres'
-                }));
-                writeCloudTableReportes(normalizedRemote);
+                const visibleRemote = [];
+                for (const rem of remoteRows) {
+                  if (isDeletedCloudRow(rem)) {
+                    markReportIdDeleted(rem.id);
+                    continue;
+                  }
+                  if (readDeletedReportIds().has(rem.id)) continue;
+                  visibleRemote.push({
+                    ...rem,
+                    cloud_mode: 'supabase-cloud-postgres'
+                  });
+                }
+                writeCloudTableReportes(visibleRemote);
                 return {
-                  data: normalizedRemote.sort((a, b) =>
+                  data: visibleRemote.sort((a, b) =>
                     (b.creado_en || '').localeCompare(a.creado_en || '')
                   ),
                   error: null,
@@ -860,10 +904,100 @@ class SupabaseResilientClient {
           }
         }
 
-        const rows = readCloudTableReportes().sort((a, b) =>
-          (b.creado_en || '').localeCompare(a.creado_en || '')
-        );
+        const deletedSet = readDeletedReportIds();
+        const rows = readCloudTableReportes()
+          .filter((r) => {
+            if (isDeletedCloudRow(r)) {
+              markReportIdDeleted(r.id);
+              return false;
+            }
+            return !deletedSet.has(r.id);
+          })
+          .sort((a, b) => (b.creado_en || '').localeCompare(a.creado_en || ''));
         return { data: rows, error: null };
+      },
+
+      /**
+       * Elimina una observación/reporte en Supabase (local mirror + Postgres DELETE + respaldo PATCH tombstone)
+       */
+      delete: async (reportId) => {
+        if (!reportId) {
+          return { error: { message: 'ID de reporte requerido para eliminar.' } };
+        }
+        markReportIdDeleted(reportId);
+
+        const remaining = readCloudTableReportes().filter((r) => r.id !== reportId);
+        writeCloudTableReportes(remaining);
+
+        const cfg = this.getConfig();
+        const session = this._readStoredSession();
+        const authBearer = this._getValidBearerToken(session, cfg);
+        let remoteDeletedOrMarked = false;
+
+        if (!cfg.isPlaceholder && navigator.onLine) {
+          const base = cfg.url.replace(/\/$/, '');
+          const filterEndpoint = `${base}/rest/v1/${encodeURIComponent(tableName)}?id=eq.${encodeURIComponent(reportId)}`;
+
+          // 1. Intentar DELETE directo en Postgres
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 8000);
+            const delRes = await fetch(filterEndpoint, {
+              method: 'DELETE',
+              headers: {
+                apikey: cfg.anonKey,
+                Authorization: `Bearer ${authBearer}`,
+                Prefer: 'return=representation'
+              },
+              signal: controller.signal
+            });
+            clearTimeout(timer);
+            if (delRes.ok) {
+              const deletedRows = await delRes.json().catch(() => []);
+              if (Array.isArray(deletedRows) && deletedRows.length > 0) {
+                remoteDeletedOrMarked = true;
+              }
+            }
+          } catch (err) {
+            console.warn('[Supabase] Error en DELETE remoto, aplicando respaldo:', err);
+          }
+
+          // 2. Respaldo multi-dispositivo vía PATCH por si la política RLS remota no permite FOR DELETE
+          try {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 8000);
+            const patchRes = await fetch(filterEndpoint, {
+              method: 'PATCH',
+              headers: {
+                apikey: cfg.anonKey,
+                Authorization: `Bearer ${authBearer}`,
+                'Content-Type': 'application/json',
+                Prefer: 'return=minimal'
+              },
+              body: JSON.stringify({
+                observacion: DELETED_REPORT_MARKER,
+                seguimientos: [
+                  {
+                    id: 'deleted',
+                    estado_seguimiento: '__ELIMINADO__',
+                    fecha: '1970-01-01',
+                    comentario: 'Eliminado'
+                  }
+                ],
+                actualizado_en: new Date().toISOString()
+              }),
+              signal: controller.signal
+            });
+            clearTimeout(timer);
+            if (patchRes.ok) {
+              remoteDeletedOrMarked = true;
+            }
+          } catch (err) {
+            console.warn('[Supabase] Error en PATCH tombstone:', err);
+          }
+        }
+
+        return { error: null, remoteDeletedOrMarked };
       }
     };
   }
@@ -1030,12 +1164,20 @@ class SupabaseResilientClient {
     return readCloudTableReportes();
   }
 
+  isReportDeleted(reportId) {
+    if (!reportId) return false;
+    return readDeletedReportIds().has(reportId);
+  }
+
   /**
    * Obtiene una instantánea de lo almacenado en Supabase Cloud (tabla `public.reportes` y bucket `fotos`)
    * para auditoría en M5 (Escenarios P6, P7 y P8) y M6.
    */
   getCloudSnapshot() {
-    const reportesCloud = readCloudTableReportes();
+    const deletedSet = readDeletedReportIds();
+    const reportesCloud = readCloudTableReportes().filter(
+      (r) => !isDeletedCloudRow(r) && !deletedSet.has(r.id)
+    );
     const bucketFotos = readCloudBucketFotos();
 
     // Verificar que ningún registro en public.reportes esté huérfano sin sus fotos en Storage

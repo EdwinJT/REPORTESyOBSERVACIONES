@@ -5,7 +5,7 @@
  * abra en Modo Avión (Escenario P5) tras cerrarse completamente.
  */
 
-const CACHE_VERSION = 'v1.9.12-zoom-celular-optimo';
+const CACHE_VERSION = 'v1.9.13-borrar-observacion';
 const APP_SHELL_CACHE = `mineria-pwa-appshell-${CACHE_VERSION}`;
 
 const PRECACHE_ASSETS = [

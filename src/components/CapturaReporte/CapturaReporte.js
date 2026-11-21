@@ -66,6 +66,7 @@ export class CapturaReporteView {
     this.isCompressing = false;
     this.viewerModal = null; // { title, url, isVideo, meta }
     this.followupModal = null; // { reporteId, codigo_equipo, fecha, estado_seguimiento, comentario, fotos_locales, video_local, validationError }
+    this.deleteConfirmModal = null; // { reporteId, codigo_equipo, fecha, observacion, seguimientosCount, isDeleting }
   }
 
   async init() {
@@ -257,8 +258,20 @@ export class CapturaReporteView {
       }
     }
 
+    const cleanedReports = [];
+    for (const r of mergedReports) {
+      const isDeleted =
+        (typeof supabase.isReportDeleted === 'function' && supabase.isReportDeleted(r.id)) ||
+        r.observacion === '__REPORTE_ELIMINADO__';
+      if (isDeleted) {
+        await localDb.reportes.delete(r.id);
+        continue;
+      }
+      cleanedReports.push(r);
+    }
+
     this.equipos = await getAllEquipments();
-    this.reportes = mergedReports.sort((a, b) => {
+    this.reportes = cleanedReports.sort((a, b) => {
       const codeCmp = String(a.codigo_equipo || '').localeCompare(
         String(b.codigo_equipo || ''),
         'es',
@@ -744,6 +757,30 @@ export class CapturaReporteView {
       'success',
       `Estado cambiado a "${estadoDestino}". La observación de ${reporte.codigo_equipo} volvió al Panel Principal.`
     );
+  }
+
+  // Eliminar toda la fila de observación (reporte inicial + fotos + todos sus seguimientos)
+  async handleConfirmDeleteReport() {
+    if (!this.deleteConfirmModal || this.deleteConfirmModal.isDeleting) return;
+    const { reporteId, codigo_equipo, fecha } = this.deleteConfirmModal;
+    this.deleteConfirmModal.isDeleting = true;
+    this.render();
+
+    try {
+      await localDb.reportes.delete(reporteId);
+      await supabase.from('reportes').delete(reporteId);
+      this.deleteConfirmModal = null;
+      await this.reloadData();
+      this.setBanner(
+        'success',
+        `Se borró completamente la observación del equipo ${codigo_equipo} (${formatFechaDDMMYYYY(fecha)}) y todos sus seguimientos.`
+      );
+    } catch (err) {
+      if (this.deleteConfirmModal) {
+        this.deleteConfirmModal.isDeleting = false;
+      }
+      this.setBanner('error', err?.message || 'No se pudo borrar la observación.');
+    }
   }
 
   render() {
@@ -1262,6 +1299,7 @@ export class CapturaReporteView {
 
       ${this.renderViewerModal()}
       ${this.renderFollowupModal()}
+      ${this.renderDeleteConfirmModal()}
     `;
 
     this.attachEvents();
@@ -1385,6 +1423,14 @@ export class CapturaReporteView {
               `
                   : `<span class="badge badge-resolved">✅ Observación Levantada</span>`
               }
+              <button
+                type="button"
+                class="btn-mine btn-sm-mine btn-danger"
+                data-request-delete-report="${this.escapeHtml(rep.id)}"
+                title="Borrar toda esta fila de observación y sus seguimientos"
+              >
+                🗑️ Borrar
+              </button>
             </div>
             ${
               isReportLevantada
@@ -1743,6 +1789,46 @@ export class CapturaReporteView {
                       : '💾 Guardar Seguimiento (↳)'
               }
             </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  renderDeleteConfirmModal() {
+    if (!this.deleteConfirmModal) return '';
+    const m = this.deleteConfirmModal;
+    return `
+      <div class="modal-backdrop" id="modal-delete-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title">
+        <div class="modal-card" style="max-width: 560px; border-color: #DC2626;">
+          <div class="section-header" style="background: #7F1D1D; border-bottom-color: #F87171;">
+            <h3 class="section-title" id="delete-modal-title">🗑️ Confirmar Borrado de Fila Completa</h3>
+            <button type="button" class="btn-mine btn-sm-mine" id="btn-close-delete-modal" ${m.isDeleting ? 'disabled' : ''}>
+              ✕ Cerrar
+            </button>
+          </div>
+
+          <div style="display:flex; flex-direction:column; gap:0.85rem;">
+            <div class="alert-banner alert-error" style="margin:0;">
+              <span>⚠️ Esta acción eliminará toda la observación, sus fotos y sus <strong>${m.seguimientosCount}</strong> seguimiento(s) asociados en este dispositivo y en la nube.</span>
+            </div>
+
+            <div class="field-group">
+              <div style="font-size:0.95rem;"><strong>Equipo:</strong> 🚜 ${this.escapeHtml(m.codigo_equipo)}</div>
+              <div style="font-size:0.95rem;"><strong>Fecha Inicial:</strong> 📅 ${this.escapeHtml(formatFechaDDMMYYYY(m.fecha))}</div>
+              <div style="font-size:0.92rem; margin-top:0.25rem;">
+                <strong>Observación:</strong> ${this.escapeHtml(m.observacion || '(Sin descripción)')}
+              </div>
+            </div>
+
+            <div style="display:flex; justify-content:flex-end; gap:0.65rem; flex-wrap:wrap;">
+              <button type="button" class="btn-mine btn-secondary" id="btn-cancel-delete-report" ${m.isDeleting ? 'disabled' : ''}>
+                ✕ Cancelar
+              </button>
+              <button type="button" class="btn-mine btn-danger" id="btn-confirm-delete-report" ${m.isDeleting ? 'disabled' : ''}>
+                ${m.isDeleting ? '⏳ Borrando...' : '🗑️ Sí, Borrar Fila Completa'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -2114,6 +2200,38 @@ export class CapturaReporteView {
         const nuevoEstado = sel ? sel.value : 'Sigue observación';
         this.handleReopenResolvedReport(repId, nuevoEstado);
       });
+    });
+
+    // Abrir modal de confirmación para borrar toda la fila de observación
+    this.rootEl.querySelectorAll('[data-request-delete-report]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const repId = btn.getAttribute('data-request-delete-report');
+        const rep = this.reportes.find((r) => r.id === repId);
+        if (!rep) return;
+        this.deleteConfirmModal = {
+          reporteId: rep.id,
+          codigo_equipo: rep.codigo_equipo,
+          fecha: rep.fecha,
+          observacion: rep.observacion || '',
+          seguimientosCount: Array.isArray(rep.seguimientos) ? rep.seguimientos.length : 0,
+          isDeleting: false
+        };
+        this.render();
+      });
+    });
+
+    const closeDeleteModal = () => {
+      if (this.deleteConfirmModal?.isDeleting) return;
+      this.deleteConfirmModal = null;
+      this.render();
+    };
+    this.rootEl.querySelector('#btn-close-delete-modal')?.addEventListener('click', closeDeleteModal);
+    this.rootEl.querySelector('#btn-cancel-delete-report')?.addEventListener('click', closeDeleteModal);
+    this.rootEl.querySelector('#modal-delete-backdrop')?.addEventListener('click', (e) => {
+      if (e.target.id === 'modal-delete-backdrop') closeDeleteModal();
+    });
+    this.rootEl.querySelector('#btn-confirm-delete-report')?.addEventListener('click', () => {
+      this.handleConfirmDeleteReport();
     });
 
     // Eventos de modales

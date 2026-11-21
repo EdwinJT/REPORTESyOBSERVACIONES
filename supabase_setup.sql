@@ -60,8 +60,9 @@ DROP POLICY IF EXISTS "reportes_update_own" ON public.reportes;
 DROP POLICY IF EXISTS "reportes_select_all" ON public.reportes;
 DROP POLICY IF EXISTS "reportes_insert_all" ON public.reportes;
 DROP POLICY IF EXISTS "reportes_update_all" ON public.reportes;
+DROP POLICY IF EXISTS "reportes_delete_all" ON public.reportes;
 
--- Políticas de lectura, subida y actualización para anon y authenticated
+-- Políticas de lectura, subida, actualización y eliminación para anon y authenticated
 CREATE POLICY "reportes_select_all"
   ON public.reportes
   FOR SELECT
@@ -80,6 +81,12 @@ CREATE POLICY "reportes_update_all"
   TO anon, authenticated
   USING (true)
   WITH CHECK (true);
+
+CREATE POLICY "reportes_delete_all"
+  ON public.reportes
+  FOR DELETE
+  TO anon, authenticated
+  USING (true);
 
 -- =============================================================================
 -- 4. BUCKET EN SUPABASE STORAGE: 'fotos'
