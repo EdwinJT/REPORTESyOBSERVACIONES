@@ -1045,14 +1045,6 @@ export class CapturaReporteView {
           <div class="section-header">
             <div>
               <h2 class="section-title">📝 2. Panel de Creación de Reporte ("Nuevo Reporte" — M1)</h2>
-              <p class="brand-subtitle">
-                Diseñado para operación con guantes (botones ≥ 48 px). Captura de 1 a 5 fotos comprimidas + 1 video corto opcional, código normalizado y múltiples observaciones.
-              </p>
-            </div>
-            <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-              <button type="button" class="btn-mine btn-sm-mine btn-secondary" id="btn-test-night-p1" title="Simula las 23:30 h en Lima (04:30 UTC del día siguiente) para verificar Escenario P1">
-                🌙 Probar Guardia Nocturna 23:30 h (P1)
-              </button>
             </div>
           </div>
 
@@ -1405,13 +1397,11 @@ export class CapturaReporteView {
                       })`
                 }
               </h2>
-              <p class="brand-subtitle">
-                ${
-                  this.vistaTabla === 'levantadas'
-                    ? 'Historial de observaciones cerradas/levantadas. Puedes cambiar su estado para devolverlas al Panel Principal.'
-                    : 'Agrupadas por <strong>código de equipo</strong>. Orden operativo: <strong>1. Equipo → 2. Fecha (Inicial / Seg.) → 3. Vista Previa (Inicial / Seg.) → 4. Observación Principal y Comentarios Posteriores → 5. Tipo / Prioridad → 6. Estado</strong>.'
-                }
-              </p>
+              ${
+                this.vistaTabla === 'levantadas'
+                  ? `<p class="brand-subtitle">Historial de observaciones cerradas/levantadas. Puedes cambiar su estado para devolverlas al Panel Principal.</p>`
+                  : ''
+              }
             </div>
             ${
               this.filtroEquipo !== 'TODOS'
@@ -2295,22 +2285,6 @@ export class CapturaReporteView {
       btnClearFilter.addEventListener('click', () => {
         this.filtroEquipo = 'TODOS';
         this.render();
-      });
-    }
-
-    // Botón para probar Escenario P1 (Guardia nocturna 23:30 h en Lima = 04:30 UTC del día siguiente)
-    const btnTestNightP1 = this.rootEl.querySelector('#btn-test-night-p1');
-    if (btnTestNightP1) {
-      btnTestNightP1.addEventListener('click', () => {
-        // 2026-11-18T04:30:00Z equivale exactamente a 2026-11-17 23:30:00 en Lima (UTC-5)
-        const simulatedNightDate = new Date('2026-11-18T04:30:00.000Z');
-        const wrongUtcDate = simulatedNightDate.toISOString().slice(0, 10);
-        const correctPeruDate = getFechaHoyPeru(simulatedNightDate);
-        this.form.fecha = correctPeruDate;
-        this.setBanner(
-          'success',
-          `Prueba P1 (Guardia Nocturna 23:30 h Lima): En UTC ya sería "${wrongUtcDate}", pero datePeru.js mantuvo la fecha real de Perú "${correctPeruDate}".`
-        );
       });
     }
 
