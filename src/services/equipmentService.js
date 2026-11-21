@@ -8,6 +8,50 @@
 import { localDb } from '../db/localDb.js';
 import { normalizeEquipmentCode } from '../utils/codeNormalizer.js';
 
+const STORAGE_DELETED_EQUIPOS_KEY = 'mineria_equipos_eliminados_v1';
+
+function readDeletedEquipmentCodes() {
+  try {
+    const raw = localStorage.getItem(STORAGE_DELETED_EQUIPOS_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeDeletedEquipmentCodes(set) {
+  try {
+    localStorage.setItem(STORAGE_DELETED_EQUIPOS_KEY, JSON.stringify(Array.from(set)));
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function markEquipmentCodeDeleted(rawCode) {
+  const codigo = normalizeEquipmentCode(rawCode);
+  if (!codigo) return;
+  const set = readDeletedEquipmentCodes();
+  set.add(codigo);
+  writeDeletedEquipmentCodes(set);
+}
+
+function unmarkEquipmentCodeDeleted(rawCode) {
+  const codigo = normalizeEquipmentCode(rawCode);
+  if (!codigo) return;
+  const set = readDeletedEquipmentCodes();
+  if (set.delete(codigo)) {
+    writeDeletedEquipmentCodes(set);
+  }
+}
+
+export function isEquipmentCodeDeleted(rawCode) {
+  const codigo = normalizeEquipmentCode(rawCode);
+  if (!codigo) return false;
+  return readDeletedEquipmentCodes().has(codigo);
+}
+
 const INITIAL_SAMPLE_EQUIPOS = [
   { codigo: '793F-01', categoria: 'Camión Minero CAT 793F' },
   { codigo: '793F-05', categoria: 'Camión Minero CAT 793F' },
@@ -43,13 +87,19 @@ export function inferEquipmentCategory(codigo = '') {
 
 export async function ensureInitialEquipmentCatalog() {
   const existing = await localDb.equipos.toArray();
+  const deletedSet = readDeletedEquipmentCodes();
   if (existing.length > 0) {
-    return sortEquipmentList(existing);
+    return sortEquipmentList(existing.filter((item) => !deletedSet.has(item.codigo)));
+  }
+
+  if (deletedSet.size > 0) {
+    return [];
   }
 
   const now = new Date().toISOString();
   for (let i = 0; i < INITIAL_SAMPLE_EQUIPOS.length; i++) {
     const item = INITIAL_SAMPLE_EQUIPOS[i];
+    if (deletedSet.has(item.codigo)) continue;
     await localDb.equipos.put({
       codigo: item.codigo,
       categoria: item.categoria,
@@ -60,7 +110,7 @@ export async function ensureInitialEquipmentCatalog() {
   }
 
   const seeded = await localDb.equipos.toArray();
-  return sortEquipmentList(seeded);
+  return sortEquipmentList(seeded.filter((item) => !deletedSet.has(item.codigo)));
 }
 
 export function sortEquipmentList(list = []) {
@@ -73,7 +123,8 @@ export function sortEquipmentList(list = []) {
 
 export async function getAllEquipments() {
   const list = await localDb.equipos.toArray();
-  return sortEquipmentList(list);
+  const deletedSet = readDeletedEquipmentCodes();
+  return sortEquipmentList(list.filter((item) => !deletedSet.has(item.codigo)));
 }
 
 export async function createOrTouchEquipment(rawCode, categoria = '', origenPreferido = 'manual') {
@@ -82,6 +133,7 @@ export async function createOrTouchEquipment(rawCode, categoria = '', origenPref
     throw new Error('Ingresa un código de equipo válido (ej. "793F-05").');
   }
 
+  unmarkEquipmentCodeDeleted(codigo);
   const existing = await localDb.equipos.get(codigo);
   const now = new Date().toISOString();
 
@@ -100,6 +152,52 @@ export async function createOrTouchEquipment(rawCode, categoria = '', origenPref
   };
 }
 
+export async function renameOrUpdateEquipment(oldRawCode, newRawCode, newCategoria = '') {
+  const oldCodigo = normalizeEquipmentCode(oldRawCode);
+  const nuevoCodigo = normalizeEquipmentCode(newRawCode);
+  if (!nuevoCodigo) {
+    throw new Error('Ingresa un código de equipo válido (ej. "793F-05").');
+  }
+
+  const prev = oldCodigo ? await localDb.equipos.get(oldCodigo) : null;
+  const targetExisting = await localDb.equipos.get(nuevoCodigo);
+  const categoriaFinal =
+    newCategoria.trim() ||
+    targetExisting?.categoria ||
+    prev?.categoria ||
+    inferEquipmentCategory(nuevoCodigo);
+
+  if (oldCodigo && oldCodigo !== nuevoCodigo) {
+    await localDb.equipos.delete(oldCodigo);
+    markEquipmentCodeDeleted(oldCodigo);
+  }
+
+  unmarkEquipmentCodeDeleted(nuevoCodigo);
+  const now = new Date().toISOString();
+  await localDb.equipos.put({
+    codigo: nuevoCodigo,
+    categoria: categoriaFinal,
+    origen: 'manual',
+    ultimo_uso: now,
+    creado_en: targetExisting?.creado_en || prev?.creado_en || now
+  });
+
+  return {
+    oldCodigo,
+    nuevoCodigo,
+    categoria: categoriaFinal,
+    renamed: Boolean(oldCodigo && oldCodigo !== nuevoCodigo)
+  };
+}
+
+export async function deleteEquipmentFromCatalog(rawCode) {
+  const codigo = normalizeEquipmentCode(rawCode);
+  if (!codigo) return false;
+  markEquipmentCodeDeleted(codigo);
+  await localDb.equipos.delete(codigo);
+  return true;
+}
+
 /**
  * M6 — Sincroniza los códigos de equipo presentes en reportes de Supabase (`public.reportes`)
  * y reportes locales hacia la tabla local `equipos` en IndexedDB (`origen: 'nube'`).
@@ -107,7 +205,10 @@ export async function createOrTouchEquipment(rawCode, categoria = '', origenPref
  * en el selector de captura (M1) y en los filtros del historial (M6).
  */
 export async function syncEquipmentsFromCloudReports(cloudReports = [], localReports = []) {
-  const existingList = await localDb.equipos.toArray();
+  const deletedSet = readDeletedEquipmentCodes();
+  const existingList = (await localDb.equipos.toArray()).filter(
+    (item) => !deletedSet.has(item.codigo)
+  );
   const existingMap = new Map(existingList.map((item) => [item.codigo, item]));
   const newlyAddedCodes = [];
   const nowIso = new Date().toISOString();
@@ -115,7 +216,7 @@ export async function syncEquipmentsFromCloudReports(cloudReports = [], localRep
   // 1. Procesar códigos provenientes de la nube (public.reportes)
   for (const rep of cloudReports) {
     const codigo = normalizeEquipmentCode(rep?.codigo_equipo || '');
-    if (!codigo) continue;
+    if (!codigo || deletedSet.has(codigo)) continue;
 
     const repTimestamp = rep.actualizado_en || rep.creado_en || nowIso;
     const current = existingMap.get(codigo);
@@ -142,7 +243,7 @@ export async function syncEquipmentsFromCloudReports(cloudReports = [], localRep
   // 2. Asegurar también cualquier código presente en reportes locales
   for (const rep of localReports) {
     const codigo = normalizeEquipmentCode(rep?.codigo_equipo || '');
-    if (!codigo) continue;
+    if (!codigo || deletedSet.has(codigo)) continue;
 
     if (!existingMap.has(codigo)) {
       const localEquip = {

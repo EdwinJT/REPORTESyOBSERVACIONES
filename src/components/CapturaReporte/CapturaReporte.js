@@ -20,7 +20,9 @@ import { normalizeEquipmentCode } from '../../utils/codeNormalizer.js';
 import {
   getAllEquipments,
   createOrTouchEquipment,
-  syncEquipmentsFromCloudReports
+  syncEquipmentsFromCloudReports,
+  renameOrUpdateEquipment,
+  deleteEquipmentFromCatalog
 } from '../../services/equipmentService.js';
 import {
   compressPhotoFile,
@@ -68,6 +70,8 @@ export class CapturaReporteView {
     this.followupModal = null; // { reporteId, codigo_equipo, fecha, estado_seguimiento, comentario, fotos_locales, video_local, validationError }
     this.deleteConfirmModal = null; // { reporteId, codigo_equipo, fecha, observacion, seguimientosCount, isDeleting }
     this.editReportModal = null; // { reporteId, codigo_equipo, fecha, tipo, prioridad, observacion, fotos_locales, isUploadingPhotos, uploadingCount, isSaving, validationError }
+    this.editEquipmentModal = null; // { oldCodigo, nuevoCodigo, categoria, reportCount, isSaving, validationError }
+    this.deleteEquipmentModal = null; // { codigo, categoria, reportCount, deleteReportsToo, isDeleting }
   }
 
   async init() {
@@ -967,6 +971,139 @@ export class CapturaReporteView {
     }
   }
 
+  // Guardar edición o renombrado de un código de equipo en catálogo (y actualizar sus observaciones)
+  async handleSaveEditEquipment() {
+    if (!this.editEquipmentModal || this.editEquipmentModal.isSaving) return;
+
+    const { oldCodigo, nuevoCodigo, categoria } = this.editEquipmentModal;
+    const normalizedNew = normalizeEquipmentCode(nuevoCodigo);
+
+    if (!normalizedNew) {
+      this.editEquipmentModal.validationError =
+        'Ingresa un código de equipo válido (ej. "793F-05"). Caso contrario, no se guardarán los cambios.';
+      this.render();
+      const inp = this.rootEl.querySelector('#modal-edit-eq-codigo');
+      if (inp) {
+        inp.focus();
+        inp.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+      return;
+    }
+
+    this.editEquipmentModal.validationError = null;
+    this.editEquipmentModal.isSaving = true;
+    this.render();
+
+    try {
+      const res = await renameOrUpdateEquipment(oldCodigo, normalizedNew, categoria);
+      let updatedReportsCount = 0;
+
+      if (res.renamed) {
+        const affectedReports = this.reportes.filter((r) => r.codigo_equipo === oldCodigo);
+        for (const r of affectedReports) {
+          const rep = await this._getWritableReport(r.id);
+          if (!rep) continue;
+
+          rep.codigo_equipo = res.nuevoCodigo;
+          rep.estado = 'pendiente';
+          rep.sincronizado_en_nube_real = false;
+          rep.ultimo_error = null;
+          rep.actualizado_en = new Date().toISOString();
+          await localDb.reportes.put(rep);
+          updatedReportsCount++;
+
+          if (pwaManager.getState().isOnline) {
+            try {
+              await syncQueue.processQueue({
+                triggerSource: 'Renombrado de código de equipo',
+                forceManual: true,
+                targetReportId: rep.id,
+                perFileDelayMs: 25
+              });
+            } catch {
+              // Permanece en cola local pendiente si hay corte de red
+            }
+          }
+        }
+
+        if (this.form.codigo_equipo === oldCodigo) {
+          this.form.codigo_equipo = res.nuevoCodigo;
+        }
+        if (this.filtroEquipo === oldCodigo) {
+          this.filtroEquipo = res.nuevoCodigo;
+        }
+      }
+
+      this.editEquipmentModal = null;
+      await this.reloadData();
+      this.setBanner(
+        'success',
+        res.renamed
+          ? `Código ${oldCodigo} cambiado a ${res.nuevoCodigo}${
+              updatedReportsCount > 0 ? ` (${updatedReportsCount} observación(es) actualizadas)` : ''
+            }.`
+          : `Código ${res.nuevoCodigo} actualizado.`
+      );
+    } catch (err) {
+      if (this.editEquipmentModal) {
+        this.editEquipmentModal.isSaving = false;
+      }
+      this.setBanner('error', err?.message || 'No se pudo actualizar el código de equipo.');
+    } finally {
+      if (this.editEquipmentModal && this.editEquipmentModal.isSaving) {
+        this.editEquipmentModal.isSaving = false;
+        this.render();
+      }
+    }
+  }
+
+  // Confirmar borrado de un código de equipo del catálogo (con borrado opcional de sus observaciones)
+  async handleConfirmDeleteEquipment() {
+    if (!this.deleteEquipmentModal || this.deleteEquipmentModal.isDeleting) return;
+
+    const { codigo, deleteReportsToo } = this.deleteEquipmentModal;
+    this.deleteEquipmentModal.isDeleting = true;
+    this.render();
+
+    try {
+      await deleteEquipmentFromCatalog(codigo);
+      let deletedReportsCount = 0;
+
+      if (deleteReportsToo) {
+        const affectedReports = this.reportes.filter((r) => r.codigo_equipo === codigo);
+        for (const r of affectedReports) {
+          await localDb.reportes.delete(r.id);
+          await supabase.from('reportes').delete(r.id);
+          deletedReportsCount++;
+        }
+      }
+
+      if (this.filtroEquipo === codigo) {
+        this.filtroEquipo = 'TODOS';
+      }
+
+      this.deleteEquipmentModal = null;
+      await this.reloadData();
+
+      if (this.form.codigo_equipo === codigo) {
+        this.form.codigo_equipo = this.equipos[0]?.codigo || '';
+      }
+
+      this.setBanner(
+        'success',
+        `Se borró el código ${codigo} del cuadro de equipos${
+          deleteReportsToo ? ` junto con ${deletedReportsCount} observación(es)` : ''
+        }.`
+      );
+    } catch (err) {
+      if (this.deleteEquipmentModal) {
+        this.deleteEquipmentModal.isDeleting = false;
+        this.render();
+      }
+      this.setBanner('error', err?.message || 'No se pudo borrar el código de equipo.');
+    }
+  }
+
   render() {
     this.revokeAllUrls();
 
@@ -1000,11 +1137,11 @@ export class CapturaReporteView {
             : ''
         }
 
-        <!-- 1. CUADRO DE CÓDIGOS DE EQUIPOS CREADOS (SELECTOR + FILTRO RÁPIDO) -->
+        <!-- 1. CUADRO DE CÓDIGOS DE EQUIPOS CREADOS -->
         <section class="section-panel" aria-label="Cuadro de Códigos de Equipos Creados">
           <div class="section-header">
             <div>
-              <h2 class="section-title">🚜 1. Cuadro de Códigos de Equipos Creados (Selector + Filtro Rápido)</h2>
+              <h2 class="section-title">🚜 1. Cuadro de Códigos de Equipos Creados</h2>
               <p class="brand-subtitle">
                 Toca cualquier código para <strong>filtrar la tabla inferior</strong> por ese equipo y <strong>preseleccionarlo</strong> automáticamente en "Nuevo Reporte".
               </p>
@@ -1025,15 +1162,33 @@ export class CapturaReporteView {
             ${this.equipos
               .map(
                 (eq) => `
-              <button
-                type="button"
-                class="equipment-chip ${this.filtroEquipo === eq.codigo ? 'active' : ''}"
-                data-filter-code="${this.escapeHtml(eq.codigo)}"
-                title="${this.escapeHtml(eq.categoria || 'Equipo minero')}"
-              >
-                <span>🔧 ${this.escapeHtml(eq.codigo)}</span>
-                <span class="chip-count">${conteoPorEquipo[eq.codigo] || 0}</span>
-              </button>
+              <div class="equipment-chip-group ${this.filtroEquipo === eq.codigo ? 'active' : ''}">
+                <button
+                  type="button"
+                  class="equipment-chip-select"
+                  data-filter-code="${this.escapeHtml(eq.codigo)}"
+                  title="Filtrar por ${this.escapeHtml(eq.codigo)} — ${this.escapeHtml(eq.categoria || 'Equipo minero')}"
+                >
+                  <span>🔧 ${this.escapeHtml(eq.codigo)}</span>
+                  <span class="chip-count">${conteoPorEquipo[eq.codigo] || 0}</span>
+                </button>
+                <div class="equipment-chip-actions">
+                  <button
+                    type="button"
+                    class="equipment-chip-action-btn edit"
+                    data-edit-equipment="${this.escapeHtml(eq.codigo)}"
+                    title="Editar código ${this.escapeHtml(eq.codigo)}"
+                    aria-label="Editar código ${this.escapeHtml(eq.codigo)}"
+                  >✏️</button>
+                  <button
+                    type="button"
+                    class="equipment-chip-action-btn delete"
+                    data-delete-equipment="${this.escapeHtml(eq.codigo)}"
+                    title="Borrar código ${this.escapeHtml(eq.codigo)}"
+                    aria-label="Borrar código ${this.escapeHtml(eq.codigo)}"
+                  >🗑️</button>
+                </div>
+              </div>
             `
               )
               .join('')}
@@ -1044,7 +1199,7 @@ export class CapturaReporteView {
         <section class="section-panel" aria-label="Panel de Creación de Reporte">
           <div class="section-header">
             <div>
-              <h2 class="section-title">📝 2. Panel de Creación de Reporte ("Nuevo Reporte" — M1)</h2>
+              <h2 class="section-title">📝 2. Panel de Creación de Reporte ("Nuevo Reporte")</h2>
             </div>
           </div>
 
@@ -1390,7 +1545,7 @@ export class CapturaReporteView {
                           ? `Todos los equipos: ${reportesLevantados.length}`
                           : `Equipo ${this.escapeHtml(this.filtroEquipo)}: ${reportesLevantados.length}`
                       })`
-                    : `📊 3. Tabla Principal — Agrupada por Código de Equipo (${
+                    : `📊 3. Tabla Principal (${
                         this.filtroEquipo === 'TODOS'
                           ? `Todos los equipos: ${reportesActivos.length}`
                           : `Filtrado por equipo ${this.escapeHtml(this.filtroEquipo)}: ${reportesActivos.length}`
@@ -1475,6 +1630,8 @@ export class CapturaReporteView {
       ${this.renderFollowupModal()}
       ${this.renderDeleteConfirmModal()}
       ${this.renderEditReportModal()}
+      ${this.renderEditEquipmentModal()}
+      ${this.renderDeleteEquipmentModal()}
     `;
 
     this.attachEvents();
@@ -2258,6 +2415,140 @@ export class CapturaReporteView {
     `;
   }
 
+  renderEditEquipmentModal() {
+    if (!this.editEquipmentModal) return '';
+    const m = this.editEquipmentModal;
+    const isSaving = Boolean(m.isSaving);
+    const normalizedPreview = normalizeEquipmentCode(m.nuevoCodigo);
+
+    return `
+      <div class="modal-backdrop" id="modal-edit-equipment-backdrop" role="dialog" aria-modal="true" aria-labelledby="edit-eq-modal-title">
+        <div class="modal-card" style="max-width: 560px;">
+          <div class="section-header">
+            <h3 class="section-title" id="edit-eq-modal-title">✏️ Editar Código de Equipo — ${this.escapeHtml(m.oldCodigo)}</h3>
+            <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-close-edit-equipment" ${isSaving ? 'disabled' : ''}>
+              ✕ Cerrar
+            </button>
+          </div>
+
+          <div style="display:flex; flex-direction:column; gap:0.85rem;">
+            <div class="field-group">
+              <label class="field-label" for="modal-edit-eq-codigo">
+                <span>Código de Equipo *</span>
+                <span style="color:var(--accent-amber)">Normalizado: <strong id="modal-edit-eq-preview">${this.escapeHtml(normalizedPreview || '—')}</strong></span>
+              </label>
+              <input
+                type="text"
+                id="modal-edit-eq-codigo"
+                class="input-mine${m.validationError ? ' field-error-input' : ''}"
+                value="${this.escapeHtml(m.nuevoCodigo)}"
+                placeholder="Ej. 793F-05"
+                ${isSaving ? 'disabled' : ''}
+              />
+              ${
+                m.validationError
+                  ? `<div id="modal-edit-eq-error" class="inline-field-error" role="alert">⚠️ ${this.escapeHtml(m.validationError)}</div>`
+                  : ''
+              }
+            </div>
+
+            <div class="field-group">
+              <label class="field-label" for="modal-edit-eq-categoria">
+                <span>Categoría / Descripción del Equipo</span>
+              </label>
+              <input
+                type="text"
+                id="modal-edit-eq-categoria"
+                class="input-mine"
+                value="${this.escapeHtml(m.categoria)}"
+                placeholder="Ej. Camión Minero CAT 793F"
+                ${isSaving ? 'disabled' : ''}
+              />
+            </div>
+
+            ${
+              m.reportCount > 0
+                ? `
+              <div class="alert-banner alert-success" style="margin:0;">
+                <span>ℹ️ Si cambias el código, las <strong>${m.reportCount}</strong> observación(es) asociadas a <strong>${this.escapeHtml(m.oldCodigo)}</strong> se actualizarán automáticamente al nuevo código.</span>
+              </div>
+            `
+                : ''
+            }
+
+            <div style="display:flex; justify-content:flex-end; gap:0.65rem; flex-wrap:wrap; margin-top:0.25rem;">
+              <button type="button" class="btn-mine btn-secondary" id="btn-cancel-edit-equipment" ${isSaving ? 'disabled' : ''}>
+                ✕ Cancelar
+              </button>
+              <button type="button" class="btn-mine btn-primary" id="btn-save-edit-equipment" ${isSaving ? 'disabled' : ''}>
+                ${isSaving ? '⏳ Guardando...' : '💾 Guardar Código'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  renderDeleteEquipmentModal() {
+    if (!this.deleteEquipmentModal) return '';
+    const m = this.deleteEquipmentModal;
+    const isDeleting = Boolean(m.isDeleting);
+
+    return `
+      <div class="modal-backdrop" id="modal-delete-equipment-backdrop" role="dialog" aria-modal="true" aria-labelledby="delete-eq-modal-title">
+        <div class="modal-card" style="max-width: 560px; border-color: #DC2626;">
+          <div class="section-header" style="background: #7F1D1D; border-bottom-color: #F87171;">
+            <h3 class="section-title" id="delete-eq-modal-title">🗑️ Confirmar Borrado de Código de Equipo</h3>
+            <button type="button" class="btn-mine btn-sm-mine" id="btn-close-delete-equipment" ${isDeleting ? 'disabled' : ''}>
+              ✕ Cerrar
+            </button>
+          </div>
+
+          <div style="display:flex; flex-direction:column; gap:0.85rem;">
+            <div class="alert-banner alert-error" style="margin:0;">
+              <span>⚠️ Se quitará este código del cuadro de equipos y del selector desplegable.</span>
+            </div>
+
+            <div class="field-group">
+              <div style="font-size:0.95rem;"><strong>Código:</strong> 🔧 ${this.escapeHtml(m.codigo)}</div>
+              <div style="font-size:0.95rem;"><strong>Categoría:</strong> ${this.escapeHtml(m.categoria || 'Equipo minero')}</div>
+              <div style="font-size:0.95rem;"><strong>Observaciones asociadas:</strong> ${m.reportCount}</div>
+            </div>
+
+            ${
+              m.reportCount > 0
+                ? `
+              <label class="field-group" style="display:flex; align-items:flex-start; gap:0.6rem; cursor:pointer;">
+                <input
+                  type="checkbox"
+                  id="chk-delete-eq-reports"
+                  ${m.deleteReportsToo ? 'checked' : ''}
+                  ${isDeleting ? 'disabled' : ''}
+                  style="width:20px; height:20px; margin-top:0.15rem; accent-color:#DC2626;"
+                />
+                <span style="font-size:0.92rem; font-weight:700;">
+                  Eliminar también las ${m.reportCount} observación(es) asociadas a este equipo (si no marcas esta casilla, los reportes existentes se conservan en la tabla).
+                </span>
+              </label>
+            `
+                : ''
+            }
+
+            <div style="display:flex; justify-content:flex-end; gap:0.65rem; flex-wrap:wrap;">
+              <button type="button" class="btn-mine btn-secondary" id="btn-cancel-delete-equipment" ${isDeleting ? 'disabled' : ''}>
+                ✕ Cancelar
+              </button>
+              <button type="button" class="btn-mine btn-danger" id="btn-confirm-delete-equipment" ${isDeleting ? 'disabled' : ''}>
+                ${isDeleting ? '⏳ Borrando...' : '🗑️ Sí, Borrar Código'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   attachEvents() {
     // Cerrar banner
     const btnCloseBanner = this.rootEl.querySelector('#btn-close-banner');
@@ -2972,6 +3263,113 @@ export class CapturaReporteView {
     this.rootEl.querySelector('#btn-save-followup')?.addEventListener('click', () => {
       this.handleSaveFollowupModal();
     });
+
+    // Gestión de códigos de equipo (Editar / Borrar desde Cuadro 1)
+    this.rootEl.querySelectorAll('[data-edit-equipment]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const codigo = btn.getAttribute('data-edit-equipment');
+        const eq = this.equipos.find((e) => e.codigo === codigo);
+        if (!eq) return;
+        const reportCount = this.reportes.filter((r) => r.codigo_equipo === eq.codigo).length;
+        this.editEquipmentModal = {
+          oldCodigo: eq.codigo,
+          nuevoCodigo: eq.codigo,
+          categoria: eq.categoria || '',
+          reportCount,
+          isSaving: false,
+          validationError: null
+        };
+        this.render();
+      });
+    });
+
+    const closeEditEquipmentModal = () => {
+      if (this.editEquipmentModal?.isSaving) return;
+      this.editEquipmentModal = null;
+      this.render();
+    };
+    this.rootEl
+      .querySelector('#btn-close-edit-equipment')
+      ?.addEventListener('click', closeEditEquipmentModal);
+    this.rootEl
+      .querySelector('#btn-cancel-edit-equipment')
+      ?.addEventListener('click', closeEditEquipmentModal);
+    this.rootEl
+      .querySelector('#modal-edit-equipment-backdrop')
+      ?.addEventListener('click', (e) => {
+        if (e.target.id === 'modal-edit-equipment-backdrop') closeEditEquipmentModal();
+      });
+
+    this.rootEl.querySelector('#modal-edit-eq-codigo')?.addEventListener('input', (e) => {
+      if (!this.editEquipmentModal) return;
+      this.editEquipmentModal.nuevoCodigo = e.target.value;
+      const normalized = normalizeEquipmentCode(e.target.value);
+      const previewEl = this.rootEl.querySelector('#modal-edit-eq-preview');
+      if (previewEl) {
+        previewEl.textContent = normalized || '—';
+      }
+      if (this.editEquipmentModal.validationError && normalized) {
+        this.editEquipmentModal.validationError = null;
+        e.target.classList.remove('field-error-input');
+        this.rootEl.querySelector('#modal-edit-eq-error')?.remove();
+      }
+    });
+
+    this.rootEl.querySelector('#modal-edit-eq-categoria')?.addEventListener('input', (e) => {
+      if (this.editEquipmentModal) {
+        this.editEquipmentModal.categoria = e.target.value;
+      }
+    });
+
+    this.rootEl.querySelector('#btn-save-edit-equipment')?.addEventListener('click', () => {
+      this.handleSaveEditEquipment();
+    });
+
+    this.rootEl.querySelectorAll('[data-delete-equipment]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const codigo = btn.getAttribute('data-delete-equipment');
+        const eq = this.equipos.find((e) => e.codigo === codigo);
+        if (!eq) return;
+        const reportCount = this.reportes.filter((r) => r.codigo_equipo === eq.codigo).length;
+        this.deleteEquipmentModal = {
+          codigo: eq.codigo,
+          categoria: eq.categoria || '',
+          reportCount,
+          deleteReportsToo: false,
+          isDeleting: false
+        };
+        this.render();
+      });
+    });
+
+    const closeDeleteEquipmentModal = () => {
+      if (this.deleteEquipmentModal?.isDeleting) return;
+      this.deleteEquipmentModal = null;
+      this.render();
+    };
+    this.rootEl
+      .querySelector('#btn-close-delete-equipment')
+      ?.addEventListener('click', closeDeleteEquipmentModal);
+    this.rootEl
+      .querySelector('#btn-cancel-delete-equipment')
+      ?.addEventListener('click', closeDeleteEquipmentModal);
+    this.rootEl
+      .querySelector('#modal-delete-equipment-backdrop')
+      ?.addEventListener('click', (e) => {
+        if (e.target.id === 'modal-delete-equipment-backdrop') closeDeleteEquipmentModal();
+      });
+
+    this.rootEl.querySelector('#chk-delete-eq-reports')?.addEventListener('change', (e) => {
+      if (this.deleteEquipmentModal) {
+        this.deleteEquipmentModal.deleteReportsToo = Boolean(e.target.checked);
+      }
+    });
+
+    this.rootEl
+      .querySelector('#btn-confirm-delete-equipment')
+      ?.addEventListener('click', () => {
+        this.handleConfirmDeleteEquipment();
+      });
   }
 
   escapeHtml(str = '') {
