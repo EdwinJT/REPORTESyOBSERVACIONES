@@ -85,6 +85,50 @@ export class CapturaReporteView {
     return url;
   }
 
+  async hydrateRemoteSeguimientos(remSegs, localSegs = []) {
+    if (!Array.isArray(remSegs)) return [];
+    const localList = Array.isArray(localSegs) ? localSegs : [];
+    const hydrated = [];
+
+    for (let sIdx = 0; sIdx < remSegs.length; sIdx++) {
+      const seg = remSegs[sIdx];
+      const matchedLocal =
+        localList.find((ls) => ls.id && seg.id && ls.id === seg.id) || localList[sIdx] || null;
+      const localFotos = Array.isArray(matchedLocal?.fotos_locales)
+        ? matchedLocal.fotos_locales
+        : [];
+      const hasLocalBlobs = localFotos.some((lf) => Boolean(lf?.blob));
+
+      let segFotosLocales = [];
+      if (hasLocalBlobs) {
+        segFotosLocales = localFotos;
+      } else {
+        const segPaths = Array.isArray(seg.fotos) ? seg.fotos : [];
+        for (let si = 0; si < segPaths.length; si++) {
+          const signedSeg = await supabase.storage.from('fotos').createSignedUrl(segPaths[si], 3600);
+          segFotosLocales.push({
+            indice: si + 1,
+            blob: null,
+            signedUrl: signedSeg?.data?.signedUrl || '',
+            ruta_remota: segPaths[si],
+            peso_bytes: 0,
+            ancho: 1600,
+            alto: 1200
+          });
+        }
+      }
+
+      hydrated.push({
+        ...matchedLocal,
+        ...seg,
+        fotos_locales: segFotosLocales,
+        video_local: matchedLocal?.video_local || null
+      });
+    }
+
+    return hydrated;
+  }
+
   async reloadData() {
     const rawLocal = await localDb.reportes.toArray();
     const authState = authService.getState();
@@ -104,12 +148,22 @@ export class CapturaReporteView {
           for (const rem of res.data) {
             const existingLoc = mergedMap.get(rem.id);
             if (existingLoc) {
+              // Preservar reportes locales con cambios/seguimientos pendientes por subir
+              if (existingLoc.estado === 'pendiente' || existingLoc.estado === 'sincronizando') {
+                mergedMap.set(rem.id, existingLoc);
+                continue;
+              }
+              const mergedSegs = await this.hydrateRemoteSeguimientos(
+                rem.seguimientos,
+                existingLoc.seguimientos
+              );
               mergedMap.set(rem.id, {
                 ...existingLoc,
                 ...rem,
                 fotos_locales: existingLoc.fotos_locales || [],
                 video_local: existingLoc.video_local || null,
                 fotos_rutas: Array.isArray(rem.fotos) ? rem.fotos : existingLoc.fotos_rutas || [],
+                seguimientos: mergedSegs.length > 0 ? mergedSegs : existingLoc.seguimientos || [],
                 estado: 'sincronizado',
                 sincronizado_en_nube_real: true
               });
@@ -130,29 +184,7 @@ export class CapturaReporteView {
                 });
               }
 
-              const cloudSegs = [];
-              if (Array.isArray(rem.seguimientos)) {
-                for (const seg of rem.seguimientos) {
-                  const segFotosLocales = [];
-                  const segPaths = Array.isArray(seg.fotos) ? seg.fotos : [];
-                  for (let si = 0; si < segPaths.length; si++) {
-                    const signedSeg = await supabase.storage.from('fotos').createSignedUrl(segPaths[si], 3600);
-                    segFotosLocales.push({
-                      indice: si + 1,
-                      blob: null,
-                      signedUrl: signedSeg?.data?.signedUrl || '',
-                      ruta_remota: segPaths[si],
-                      peso_bytes: 0,
-                      ancho: 1600,
-                      alto: 1200
-                    });
-                  }
-                  cloudSegs.push({
-                    ...seg,
-                    fotos_locales: segFotosLocales
-                  });
-                }
-              }
+              const cloudSegs = await this.hydrateRemoteSeguimientos(rem.seguimientos, []);
 
               mergedMap.set(rem.id, {
                 ...rem,
@@ -537,6 +569,8 @@ export class CapturaReporteView {
   // Guardar un nuevo seguimiento (↳) desde el modal rápido de la tabla
   async handleSaveFollowupModal() {
     if (!this.followupModal) return;
+    if (this.followupModal.isSaving || this.followupModal.isUploadingPhotos) return;
+
     const { reporteId, fecha, estado_seguimiento, comentario, fotos_locales, video_local } =
       this.followupModal;
 
@@ -545,31 +579,70 @@ export class CapturaReporteView {
       return;
     }
 
-    const reporte = await localDb.reportes.get(reporteId);
-    if (!reporte) return;
+    this.followupModal.isSaving = true;
+    this.render();
 
-    if (!Array.isArray(reporte.seguimientos)) {
-      reporte.seguimientos = [];
+    try {
+      let reporte = await localDb.reportes.get(reporteId);
+      if (!reporte) {
+        const fromView = this.reportes.find((r) => r.id === reporteId);
+        if (!fromView) return;
+        reporte = {
+          ...fromView,
+          seguimientos: Array.isArray(fromView.seguimientos) ? [...fromView.seguimientos] : [],
+          fotos_locales: Array.isArray(fromView.fotos_locales) ? [...fromView.fotos_locales] : [],
+          fotos_rutas: Array.isArray(fromView.fotos_rutas)
+            ? [...fromView.fotos_rutas]
+            : Array.isArray(fromView.fotos)
+              ? [...fromView.fotos]
+              : []
+        };
+      }
+
+      if (!Array.isArray(reporte.seguimientos)) {
+        reporte.seguimientos = [];
+      }
+
+      reporte.seguimientos.push({
+        id: crypto.randomUUID(),
+        fecha: fecha || getFechaHoyPeru(),
+        estado_seguimiento: estado_seguimiento || 'Sigue observación',
+        comentario: comentario.trim(),
+        fotos_locales: fotos_locales || [],
+        video_local: video_local || null
+      });
+
+      reporte.estado = 'pendiente';
+      reporte.sincronizado_en_nube_real = false;
+      reporte.ultimo_error = null;
+      reporte.actualizado_en = new Date().toISOString();
+      await localDb.reportes.put(reporte);
+
+      if (pwaManager.getState().isOnline) {
+        try {
+          await syncQueue.processQueue({
+            triggerSource: 'Nuevo seguimiento agregado',
+            forceManual: true,
+            targetReportId: reporte.id,
+            perFileDelayMs: 25
+          });
+        } catch {
+          // Si falla la red momentáneamente, el seguimiento permanece seguro en IndexedDB
+        }
+      }
+
+      this.followupModal = null;
+      await this.reloadData();
+      this.setBanner(
+        'success',
+        `Seguimiento (↳) agregado al reporte de ${reporte.codigo_equipo}.`
+      );
+    } finally {
+      if (this.followupModal) {
+        this.followupModal.isSaving = false;
+        this.render();
+      }
     }
-
-    reporte.seguimientos.push({
-      id: crypto.randomUUID(),
-      fecha: fecha || getFechaHoyPeru(),
-      estado_seguimiento: estado_seguimiento || 'Sigue observación',
-      comentario: comentario.trim(),
-      fotos_locales: fotos_locales || [],
-      video_local: video_local || null
-    });
-
-    reporte.actualizado_en = new Date().toISOString();
-    await localDb.reportes.put(reporte);
-
-    this.followupModal = null;
-    await this.reloadData();
-    this.setBanner(
-      'success',
-      `Seguimiento (↳) agregado al reporte de ${reporte.codigo_equipo}.`
-    );
   }
 
   render() {
@@ -1369,6 +1442,50 @@ export class CapturaReporteView {
   renderFollowupModal() {
     if (!this.followupModal) return '';
     const m = this.followupModal;
+    const isUploading = Boolean(m.isUploadingPhotos);
+    const isSaving = Boolean(m.isSaving);
+    const isBusy = isUploading || isSaving;
+    const photoCount = m.fotos_locales.length;
+
+    let statusPillHtml = `<span class="followup-status-pill empty">Sin foto adjunta</span>`;
+    if (isUploading) {
+      statusPillHtml = `<span class="followup-status-pill uploading">⏳ Procesando foto(s)...</span>`;
+    } else if (photoCount > 0) {
+      statusPillHtml = `<span class="followup-status-pill ready">✅ ${photoCount} foto(s) lista(s) para subir</span>`;
+    }
+
+    const thumbsHtml = m.fotos_locales
+      .map((f, fIdx) => {
+        const url = f.blob ? this.createObjectUrl(f.blob) : f.signedUrl || '';
+        return `
+          <div class="followup-thumb-chip">
+            <button
+              type="button"
+              class="followup-thumb-remove"
+              data-remove-modal-seg-photo="${fIdx}"
+              title="Quitar foto #${fIdx + 1}"
+              aria-label="Quitar foto ${fIdx + 1}"
+              ${isBusy ? 'disabled' : ''}
+            >✕</button>
+            <img src="${url}" alt="Miniatura seguimiento ${fIdx + 1}" class="followup-thumb-img" />
+            <div class="followup-thumb-caption">
+              <span class="followup-thumb-ok">✓ #${fIdx + 1}</span>
+              <span>${formatBytes(f.peso_bytes || 0)}</span>
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+
+    const uploadingCardHtml = isUploading
+      ? `
+        <div class="followup-thumb-uploading">
+          <span class="followup-spinner" aria-hidden="true"></span>
+          <span>Subiendo (${m.uploadingCount || 1})...</span>
+        </div>
+      `
+      : '';
+
     return `
       <div class="modal-backdrop" id="modal-followup-backdrop">
         <div class="modal-card">
@@ -1407,23 +1524,50 @@ export class CapturaReporteView {
           </div>
 
           <div class="media-capture-box">
-            <div class="field-label" style="margin-bottom:0.5rem;">
-              <span>Evidencia del Seguimiento (${m.fotos_locales.length}/5 fotos)</span>
+            <div class="field-label" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.45rem; margin-bottom:0.55rem;">
+              <span>Evidencia del Seguimiento (${photoCount}/5 fotos)</span>
+              ${statusPillHtml}
             </div>
             <input type="file" id="modal-seg-file" accept="image/*" multiple style="display:none" />
-            <div class="media-buttons-row">
-              <button type="button" class="btn-mine btn-sm-mine btn-primary" id="btn-modal-seg-photo">
-                📷 / 📎 Adjuntar Foto de Seguimiento
-              </button>
-              <button type="button" class="btn-mine btn-sm-mine" id="btn-modal-seg-sim">
-                🧪 Generar Foto Placa de Seguimiento
-              </button>
+            <div class="followup-media-row">
+              <div class="media-buttons-row">
+                <button
+                  type="button"
+                  class="btn-mine btn-sm-mine btn-primary"
+                  id="btn-modal-seg-photo"
+                  ${photoCount >= 5 || isBusy ? 'disabled' : ''}
+                >
+                  ${isUploading ? '⏳ Procesando...' : '📷 / 📎 Adjuntar Foto de Seguimiento'}
+                </button>
+                <button
+                  type="button"
+                  class="btn-mine btn-sm-mine"
+                  id="btn-modal-seg-sim"
+                  ${photoCount >= 5 || isBusy ? 'disabled' : ''}
+                >
+                  🧪 Generar Foto Placa de Seguimiento
+                </button>
+              </div>
+              <div class="followup-thumbs-inline" aria-live="polite">
+                ${thumbsHtml}${uploadingCardHtml}
+              </div>
             </div>
           </div>
 
           <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-top:1rem;">
-            <button type="button" class="btn-mine btn-primary" id="btn-save-followup">
-              💾 Guardar Seguimiento (↳)
+            <button
+              type="button"
+              class="btn-mine btn-primary"
+              id="btn-save-followup"
+              ${isBusy ? 'disabled' : ''}
+            >
+              ${
+                isSaving
+                  ? '⏳ Guardando seguimiento...'
+                  : isUploading
+                    ? '⏳ Procesando fotos...'
+                    : '💾 Guardar Seguimiento (↳)'
+              }
             </button>
           </div>
         </div>
@@ -1800,7 +1944,10 @@ export class CapturaReporteView {
           estado_seguimiento: 'Sigue observación',
           comentario: '',
           fotos_locales: [],
-          video_local: null
+          video_local: null,
+          isUploadingPhotos: false,
+          uploadingCount: 0,
+          isSaving: false
         };
         this.render();
       });
@@ -1840,26 +1987,77 @@ export class CapturaReporteView {
     });
     modalSegFile?.addEventListener('change', async (e) => {
       if (!this.followupModal || !e.target.files) return;
-      for (const f of Array.from(e.target.files)) {
-        if (this.followupModal.fotos_locales.length >= 5) break;
-        const c = await compressPhotoFile(f, 'estandar');
-        this.followupModal.fotos_locales.push({
-          indice: this.followupModal.fotos_locales.length + 1,
-          ...c
-        });
+      const remaining = Math.max(0, 5 - this.followupModal.fotos_locales.length);
+      const selectedFiles = Array.from(e.target.files).slice(0, remaining);
+      if (selectedFiles.length === 0) {
+        e.target.value = '';
+        return;
       }
+
+      this.followupModal.isUploadingPhotos = true;
+      this.followupModal.uploadingCount = selectedFiles.length;
       this.render();
+
+      try {
+        for (const f of selectedFiles) {
+          if (!this.followupModal || this.followupModal.fotos_locales.length >= 5) break;
+          const c = await compressPhotoFile(f, 'estandar');
+          if (!this.followupModal) break;
+          this.followupModal.fotos_locales.push({
+            indice: this.followupModal.fotos_locales.length + 1,
+            ...c
+          });
+          this.followupModal.uploadingCount = Math.max(
+            0,
+            (this.followupModal.uploadingCount || 1) - 1
+          );
+          this.render();
+        }
+      } finally {
+        if (this.followupModal) {
+          this.followupModal.isUploadingPhotos = false;
+          this.followupModal.uploadingCount = 0;
+          this.render();
+        }
+        e.target.value = '';
+      }
     });
 
     this.rootEl.querySelector('#btn-modal-seg-sim')?.addEventListener('click', async () => {
-      if (!this.followupModal) return;
-      const sample = await this.generateSamplePhotoFile(this.followupModal.codigo_equipo, 'estandar');
-      const c = await compressPhotoFile(sample, 'estandar');
-      this.followupModal.fotos_locales.push({
-        indice: this.followupModal.fotos_locales.length + 1,
-        ...c
-      });
+      if (!this.followupModal || this.followupModal.fotos_locales.length >= 5) return;
+      this.followupModal.isUploadingPhotos = true;
+      this.followupModal.uploadingCount = 1;
       this.render();
+      try {
+        const sample = await this.generateSamplePhotoFile(this.followupModal.codigo_equipo, 'estandar');
+        const c = await compressPhotoFile(sample, 'estandar');
+        if (this.followupModal) {
+          this.followupModal.fotos_locales.push({
+            indice: this.followupModal.fotos_locales.length + 1,
+            ...c
+          });
+        }
+      } finally {
+        if (this.followupModal) {
+          this.followupModal.isUploadingPhotos = false;
+          this.followupModal.uploadingCount = 0;
+          this.render();
+        }
+      }
+    });
+
+    this.rootEl.querySelectorAll('[data-remove-modal-seg-photo]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (!this.followupModal || this.followupModal.isUploadingPhotos || this.followupModal.isSaving) {
+          return;
+        }
+        const idx = Number(btn.getAttribute('data-remove-modal-seg-photo'));
+        this.followupModal.fotos_locales.splice(idx, 1);
+        this.followupModal.fotos_locales.forEach((item, i) => {
+          item.indice = i + 1;
+        });
+        this.render();
+      });
     });
 
     this.rootEl.querySelector('#btn-save-followup')?.addEventListener('click', () => {

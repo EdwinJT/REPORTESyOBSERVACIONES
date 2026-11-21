@@ -710,6 +710,141 @@ body {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
 
+/* Miniaturas e indicador de carga junto al botón en modal de Seguimiento */
+.followup-media-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.followup-thumbs-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.followup-thumb-chip {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  background: #ffffff;
+  border: 2px solid #16a34a;
+  border-radius: 8px;
+  padding: 0.25rem;
+  box-shadow: 0 2px 6px rgba(22, 163, 74, 0.16);
+}
+
+.followup-thumb-img {
+  width: 68px;
+  height: 50px;
+  object-fit: cover;
+  border-radius: 5px;
+  display: block;
+  border: 1px solid #cbd5e1;
+}
+
+.followup-thumb-caption {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+  color: #0f172a;
+  line-height: 1.1;
+  white-space: nowrap;
+}
+
+.followup-thumb-ok {
+  color: #15803d;
+}
+
+.followup-thumb-remove {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 2px solid #ffffff;
+  background: #dc2626;
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 900;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+.followup-thumb-uploading {
+  width: 78px;
+  height: 70px;
+  border-radius: 8px;
+  border: 2px dashed #d97706;
+  background: #fef3c7;
+  color: #92400e;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-align: center;
+  padding: 0.25rem;
+}
+
+.followup-spinner {
+  width: 18px;
+  height: 18px;
+  border: 3px solid #fcd34d;
+  border-top-color: #d97706;
+  border-radius: 999px;
+  animation: followupSpin 0.8s linear infinite;
+}
+
+@keyframes followupSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.followup-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.18rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  border: 1.5px solid transparent;
+}
+
+.followup-status-pill.empty {
+  background: #e2e8f0;
+  color: #475569;
+  border-color: #cbd5e1;
+}
+
+.followup-status-pill.uploading {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #f59e0b;
+}
+
+.followup-status-pill.ready {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #22c55e;
+}
+
 /* Barra de Navegación de Módulos (M1 / M2) con botones >= 48px */
 .module-navbar {
   display: flex;

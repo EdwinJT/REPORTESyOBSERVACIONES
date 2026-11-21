@@ -477,14 +477,25 @@ class SyncQueueService {
           // Estructura obligatoria: {user_id}/{reporte_id}/{n}.jpg con upsert: true
           // ===================================================================
           const fotosLocales = Array.isArray(rep.fotos_locales) ? rep.fotos_locales : [];
-          if (fotosLocales.length === 0) {
+          const existingRemotePaths = Array.isArray(rep.fotos_rutas)
+            ? rep.fotos_rutas
+            : Array.isArray(rep.fotos)
+              ? rep.fotos
+              : [];
+
+          if (fotosLocales.length === 0 && existingRemotePaths.length === 0) {
             throw new Error('El reporte no contiene fotos locales para subir a Storage.');
           }
 
-          const uploadedPhotoPaths = [];
+          const uploadedPhotoPaths =
+            fotosLocales.length === 0 ? [...existingRemotePaths] : [];
 
           for (let fIdx = 0; fIdx < fotosLocales.length; fIdx++) {
             const fotoItem = fotosLocales[fIdx];
+            if (!fotoItem?.blob && fotoItem?.ruta_remota) {
+              uploadedPhotoPaths.push(fotoItem.ruta_remota);
+              continue;
+            }
             const photoNumber = fotoItem.indice || fIdx + 1;
             const storagePath = `${userId}/${rep.id}/${photoNumber}.jpg`;
 
@@ -514,8 +525,8 @@ class SyncQueueService {
           }
 
           // Subida de video opcional si existe
-          let uploadedVideoPath = null;
-          if (rep.video_local) {
+          let uploadedVideoPath = rep.video_ruta || rep.video || null;
+          if (rep.video_local && rep.video_local.blob) {
             const ext = (rep.video_local.mime_type || '').includes('webm') ? 'webm' : 'mp4';
             const videoPath = `${userId}/${rep.id}/video.${ext}`;
 
@@ -549,20 +560,28 @@ class SyncQueueService {
               const segFotosRutas = [];
               const segFotos = Array.isArray(seg.fotos_locales) ? seg.fotos_locales : [];
 
-              for (let sfIdx = 0; sfIdx < segFotos.length; sfIdx++) {
-                const sf = segFotos[sfIdx];
-                const segPath = `${userId}/${rep.id}/seg_${sIdx + 1}_${sfIdx + 1}.jpg`;
-                this._assertSignalStillActive(`la subida de foto de seguimiento de ${rep.codigo_equipo}`);
-                const segUp = await supabase.storage.from('fotos').upload(segPath, sf.blob, {
-                  upsert: true,
-                  contentType: 'image/jpeg',
-                  sizeBytes: sf.peso_bytes || 64000
-                });
-                if (segUp.error) {
-                  throw new Error(segUp.error.message);
+              if (segFotos.length === 0 && Array.isArray(seg.fotos) && seg.fotos.length > 0) {
+                segFotosRutas.push(...seg.fotos);
+              } else {
+                for (let sfIdx = 0; sfIdx < segFotos.length; sfIdx++) {
+                  const sf = segFotos[sfIdx];
+                  if (!sf?.blob && sf?.ruta_remota) {
+                    segFotosRutas.push(sf.ruta_remota);
+                    continue;
+                  }
+                  const segPath = `${userId}/${rep.id}/seg_${sIdx + 1}_${sfIdx + 1}.jpg`;
+                  this._assertSignalStillActive(`la subida de foto de seguimiento de ${rep.codigo_equipo}`);
+                  const segUp = await supabase.storage.from('fotos').upload(segPath, sf.blob, {
+                    upsert: true,
+                    contentType: 'image/jpeg',
+                    sizeBytes: sf.peso_bytes || 64000
+                  });
+                  if (segUp.error) {
+                    throw new Error(segUp.error.message);
+                  }
+                  sf.ruta_remota = segPath;
+                  segFotosRutas.push(segPath);
                 }
-                sf.ruta_remota = segPath;
-                segFotosRutas.push(segPath);
               }
 
               seguimientosRemotos.push({
