@@ -1648,11 +1648,11 @@ export class CapturaReporteView {
             <table class="operational-table report-main-table">
               <thead>
                 <tr>
-                  <th style="width: 16%;">1. Equipo / Fecha</th>
-                  <th style="width: 19%;">2. Vista Previa (Inicial / Seg.)</th>
-                  <th style="width: 39%;">3. Observación Principal y Comentarios Posteriores</th>
-                  <th style="width: 14%;">4. Tipo / Prioridad</th>
-                  <th style="width: 12%;">5. Estado</th>
+                  <th style="width: 15%;">1. Equipo / Fecha</th>
+                  <th style="width: 21%;">2. Vista Previa (Inicial / Seg.)</th>
+                  <th>3. Observación Principal y Comentarios Posteriores</th>
+                  <th class="col-compact-th">4. Tipo / Prioridad</th>
+                  <th class="col-compact-th">5. Estado</th>
                 </tr>
               </thead>
               <tbody>
@@ -1863,8 +1863,8 @@ export class CapturaReporteView {
         </td>
 
         <!-- COL 4: TIPO / PRIORIDAD -->
-        <td rowspan="${totalRows}" class="report-span-cell">
-          <div style="display:flex; flex-direction:column; gap:0.4rem;">
+        <td rowspan="${totalRows}" class="report-span-cell col-compact-td">
+          <div style="display:flex; flex-direction:column; gap:0.38rem;">
             <span class="badge badge-prio-pill ${prioClass}">
               <span class="prio-dot" aria-hidden="true">●</span> ${this.escapeHtml((rep.prioridad || 'Media').toUpperCase())}
             </span>
@@ -1875,8 +1875,8 @@ export class CapturaReporteView {
         </td>
 
         <!-- COL 5: ESTADO -->
-        <td rowspan="${totalRows}" class="report-span-cell">
-          <div style="display:flex; flex-direction:column; gap:0.4rem;">
+        <td rowspan="${totalRows}" class="report-span-cell col-compact-td">
+          <div style="display:flex; flex-direction:column; gap:0.38rem;">
             ${
               rep.sincronizado_en_nube_real
                 ? `<span class="status-synced-subtle">☁️ En nube</span>`

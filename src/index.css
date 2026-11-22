@@ -1196,6 +1196,14 @@ body.theme-night .operational-table tbody tr:nth-child(even) {
   font-weight: 600;
 }
 
+.operational-table th.col-compact-th,
+.operational-table td.col-compact-td {
+  width: 1%;
+  white-space: nowrap;
+  padding-left: 0.55rem;
+  padding-right: 0.55rem;
+}
+
 /* Escala mínima legible para metadatos inline dentro de tablas */
 .operational-table td [style*="font-size:0.7"] {
   font-size: 0.86rem !important;
