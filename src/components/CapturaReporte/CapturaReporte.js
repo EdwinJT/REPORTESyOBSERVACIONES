@@ -1603,12 +1603,11 @@ export class CapturaReporteView {
             <table class="operational-table report-main-table">
               <thead>
                 <tr>
-                  <th style="width: 13%;">1. Equipo</th>
-                  <th style="width: 14%;">2. Fecha (Inicial / Seg.)</th>
-                  <th style="width: 19%;">3. Vista Previa (Inicial / Seg.)</th>
-                  <th style="width: 29%;">4. Observación Principal y Comentarios Posteriores</th>
-                  <th style="width: 13%;">5. Tipo / Prioridad</th>
-                  <th style="width: 12%;">6. Estado</th>
+                  <th style="width: 19%;">1. Equipo / Fecha</th>
+                  <th style="width: 19%;">2. Vista Previa (Inicial / Seg.)</th>
+                  <th style="width: 36%;">3. Observación Principal y Comentarios Posteriores</th>
+                  <th style="width: 14%;">4. Tipo / Prioridad</th>
+                  <th style="width: 12%;">5. Estado</th>
                 </tr>
               </thead>
               <tbody>
@@ -1616,7 +1615,7 @@ export class CapturaReporteView {
                   reportesVisibles.length === 0
                     ? `
                   <tr>
-                    <td colspan="6" style="text-align:center; padding: 2rem; color: var(--text-muted);">
+                    <td colspan="5" style="text-align:center; padding: 2rem; color: var(--text-muted);">
                       ${
                         this.vistaTabla === 'levantadas'
                           ? 'No hay observaciones levantadas para el filtro seleccionado.'
@@ -1659,7 +1658,7 @@ export class CapturaReporteView {
 
     const initialRowHtml = `
       <tr class="${initialRowClasses}" data-report-id="${this.escapeHtml(rep.id)}">
-        <!-- COL 1: EQUIPO -->
+        <!-- COL 1: EQUIPO / FECHA / ACCIONES -->
         <td class="report-slot-cell report-equip-cell">
           <div style="display:flex; flex-direction:column; gap:0.45rem;">
             <button
@@ -1670,6 +1669,28 @@ export class CapturaReporteView {
             >
               🚜 ${this.escapeHtml(rep.codigo_equipo)}
             </button>
+            <div class="equip-date-box">
+              <div style="font-size:0.74rem; color:var(--text-muted); font-weight:700;">📌 Fecha Inicial</div>
+              <div style="font-size:0.96rem; font-weight:900; margin-top:0.12rem; white-space:nowrap;">📅 ${this.escapeHtml(formatFechaDDMMYYYY(rep.fecha))}</div>
+            </div>
+            <div class="equip-row-actions">
+              <button
+                type="button"
+                class="btn-mine btn-sm-mine btn-secondary"
+                data-open-edit-modal="${this.escapeHtml(rep.id)}"
+                title="Editar equipo, fecha, tipo, prioridad, observación o fotos de esta fila"
+              >
+                ✏️ Editar
+              </button>
+              <button
+                type="button"
+                class="btn-mine btn-sm-mine btn-danger"
+                data-request-delete-report="${this.escapeHtml(rep.id)}"
+                title="Borrar toda esta fila de observación y sus seguimientos"
+              >
+                🗑️ Borrar
+              </button>
+            </div>
             <span style="font-size:0.75rem; color:var(--text-muted);">
               ID: ${this.escapeHtml(rep.id.slice(0, 8))}
             </span>
@@ -1681,17 +1702,7 @@ export class CapturaReporteView {
           </div>
         </td>
 
-        <!-- COL 2: FECHA (INICIAL) -->
-        <td class="report-slot-cell">
-          <div class="slot-initial">
-            <div>
-              <div style="font-size:0.76rem; color:var(--text-muted); font-weight:700;">📌 Fecha Inicial</div>
-              <div style="font-size:1rem; font-weight:800; margin-top:0.2rem; white-space:nowrap;">${this.escapeHtml(formatFechaDDMMYYYY(rep.fecha))}</div>
-            </div>
-          </div>
-        </td>
-
-        <!-- COL 3: VISTA PREVIA (INICIAL) -->
+        <!-- COL 2: VISTA PREVIA (INICIAL) -->
         <td class="report-slot-cell">
           <div class="slot-initial">
             <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700; margin-bottom:0.25rem;">
@@ -1732,7 +1743,7 @@ export class CapturaReporteView {
           </div>
         </td>
 
-        <!-- COL 4: OBSERVACIÓN PRINCIPAL -->
+        <!-- COL 3: OBSERVACIÓN PRINCIPAL -->
         <td class="report-slot-cell">
           <div class="slot-initial">
             <div>
@@ -1762,22 +1773,6 @@ export class CapturaReporteView {
               `
                   : `<span class="badge badge-resolved">✅ Observación Levantada</span>`
               }
-              <button
-                type="button"
-                class="btn-mine btn-sm-mine btn-secondary"
-                data-open-edit-modal="${this.escapeHtml(rep.id)}"
-                title="Editar equipo, fecha, tipo, prioridad, observación o fotos de esta fila"
-              >
-                ✏️ Editar
-              </button>
-              <button
-                type="button"
-                class="btn-mine btn-sm-mine btn-danger"
-                data-request-delete-report="${this.escapeHtml(rep.id)}"
-                title="Borrar toda esta fila de observación y sus seguimientos"
-              >
-                🗑️ Borrar
-              </button>
             </div>
             ${
               isReportLevantada
@@ -1810,7 +1805,7 @@ export class CapturaReporteView {
           </div>
         </td>
 
-        <!-- COL 5: TIPO / PRIORIDAD -->
+        <!-- COL 4: TIPO / PRIORIDAD -->
         <td rowspan="${totalRows}" class="report-span-cell">
           <div style="display:flex; flex-direction:column; gap:0.45rem;">
             <span class="badge ${prioClass}">
@@ -1825,7 +1820,7 @@ export class CapturaReporteView {
           </div>
         </td>
 
-        <!-- COL 6: ESTADO -->
+        <!-- COL 5: ESTADO -->
         <td rowspan="${totalRows}" class="report-span-cell">
           <div style="display:flex; flex-direction:column; gap:0.5rem;">
             <span class="badge ${rep.sincronizado_en_nube_real ? 'badge-baja' : 'badge-pending'}">
@@ -1856,9 +1851,15 @@ export class CapturaReporteView {
 
         return `
       <tr class="${segRowClasses}" data-report-id="${this.escapeHtml(rep.id)}" data-seg-row="${sIdx}">
-        <!-- COL 1: DÍAS DESDE FECHA INICIAL -->
+        <!-- COL 1: FECHA SEGUIMIENTO #${sIdx + 1} + DÍAS DESDE FECHA INICIAL -->
         <td class="report-slot-cell report-elapsed-cell">
           <div class="elapsed-followup-slot ${isResolvedSeg ? 'is-resolved' : ''}">
+            <div style="font-size:0.76rem; color:${labelColor}; font-weight:800; text-align:center;">
+              ${isResolvedSeg ? `↳ ✅ Levantada (#${sIdx + 1})` : `↳ Seguimiento #${sIdx + 1}`}
+            </div>
+            <div style="font-size:0.96rem; font-weight:900; white-space:nowrap;">
+              📅 ${this.escapeHtml(formatFechaDDMMYYYY(seg.fecha))}
+            </div>
             <span
               class="elapsed-days-badge ${isResolvedSeg ? 'is-resolved' : ''}"
               title="Días transcurridos desde ${this.escapeHtml(formatFechaDDMMYYYY(rep.fecha))} hasta ${this.escapeHtml(formatFechaDDMMYYYY(seg.fecha))}"
@@ -1869,20 +1870,7 @@ export class CapturaReporteView {
           </div>
         </td>
 
-        <!-- COL 2: FECHA SEGUIMIENTO #${sIdx + 1} -->
-        <td class="report-slot-cell">
-          <div class="${slotClass}">
-            <div>
-              <div style="font-size:0.76rem; color:${labelColor}; font-weight:800;">${
-                isResolvedSeg ? `↳ ✅ Levantada (#${sIdx + 1})` : `↳ Seguimiento #${sIdx + 1}`
-              }</div>
-              <div style="font-size:0.98rem; font-weight:800; margin-top:0.2rem; white-space:nowrap;">${this.escapeHtml(formatFechaDDMMYYYY(seg.fecha))}</div>
-            </div>
-            <div style="font-size:0.74rem; color:var(--text-muted);">${isResolvedSeg ? 'Fecha Cierre' : 'Fecha Seg.'}</div>
-          </div>
-        </td>
-
-        <!-- COL 3: VISTA PREVIA SEGUIMIENTO #${sIdx + 1} -->
+        <!-- COL 2: VISTA PREVIA SEGUIMIENTO #${sIdx + 1} -->
         <td class="report-slot-cell">
           <div class="${slotClass}">
             <div style="font-size:0.75rem; color:${labelColor}; font-weight:700; margin-bottom:0.25rem;">
@@ -1914,7 +1902,7 @@ export class CapturaReporteView {
           </div>
         </td>
 
-        <!-- COL 4: COMENTARIO POSTERIOR SEGUIMIENTO #${sIdx + 1} -->
+        <!-- COL 3: COMENTARIO POSTERIOR SEGUIMIENTO #${sIdx + 1} -->
         <td class="report-slot-cell">
           <div class="${slotClass}">
             <div>
