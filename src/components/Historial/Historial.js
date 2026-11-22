@@ -223,7 +223,11 @@ export class HistorialModuleView {
     this.cloudReports = rawCloud.filter((r) => !checkDeleted(r.id, r.observacion));
 
     // Sincronizar códigos de equipo creados en la nube con el catálogo local (M6 requisito 2)
-    this.catalogSummary = await syncEquipmentsFromCloudReports(this.cloudReports, this.localReports);
+    this.catalogSummary = await syncEquipmentsFromCloudReports(
+      this.cloudReports,
+      this.localReports,
+      { authoritativeCloud: didAuthoritativeCloudFetch }
+    );
 
     // Unificar por UUID (`id`) sin duplicar
     const unifiedMap = new Map();

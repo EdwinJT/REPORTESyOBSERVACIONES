@@ -274,7 +274,9 @@ export class CapturaReporteView {
         }
 
         if (didAuthoritativeCloudFetch || (Array.isArray(remoteRows) && remoteRows.length > 0)) {
-          await syncEquipmentsFromCloudReports(remoteRows, rawLocal);
+          await syncEquipmentsFromCloudReports(remoteRows, rawLocal, {
+            authoritativeCloud: didAuthoritativeCloudFetch
+          });
           const mergedMap = new Map();
           for (const loc of rawLocal) {
             mergedMap.set(loc.id, loc);
@@ -363,6 +365,18 @@ export class CapturaReporteView {
     }
 
     this.equipos = await getAllEquipments();
+    if (
+      this.equipos.length > 0 &&
+      !this.equipos.some((eq) => eq.codigo === this.form.codigo_equipo)
+    ) {
+      this.form.codigo_equipo = this.equipos[0].codigo;
+    }
+    if (
+      this.filtroEquipo !== 'TODOS' &&
+      !this.equipos.some((eq) => eq.codigo === this.filtroEquipo)
+    ) {
+      this.filtroEquipo = 'TODOS';
+    }
     this.reportes = cleanedReports.sort((a, b) => {
       const codeCmp = String(a.codigo_equipo || '').localeCompare(
         String(b.codigo_equipo || ''),

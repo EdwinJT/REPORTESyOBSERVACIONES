@@ -6,6 +6,7 @@
  */
 
 import { localDb } from '../db/localDb.js';
+import { supabase } from '../config/supabaseClient.js';
 import { normalizeEquipmentCode } from '../utils/codeNormalizer.js';
 
 const STORAGE_DELETED_EQUIPOS_KEY = 'mineria_equipos_eliminados_v1';
@@ -90,6 +91,12 @@ export async function ensureInitialEquipmentCatalog() {
   const deletedSet = readDeletedEquipmentCodes();
   if (existing.length > 0) {
     return sortEquipmentList(existing.filter((item) => !deletedSet.has(item.codigo)));
+  }
+
+  // En producción con Supabase Cloud Real, el catálogo proviene de los reportes reales en la nube
+  const cfg = typeof supabase.getConfig === 'function' ? supabase.getConfig() : null;
+  if (cfg && !cfg.isPlaceholder) {
+    return [];
   }
 
   if (deletedSet.size > 0) {
@@ -205,11 +212,48 @@ export async function deleteEquipmentFromCatalog(rawCode) {
  * Garantiza que cualquier código registrado por otro técnico o dispositivo esté disponible
  * en el selector de captura (M1) y en los filtros del historial (M6).
  */
-export async function syncEquipmentsFromCloudReports(cloudReports = [], localReports = []) {
+export async function syncEquipmentsFromCloudReports(cloudReports = [], localReports = [], options = {}) {
+  const authoritativeCloud = Boolean(options?.authoritativeCloud);
   const deletedSet = readDeletedEquipmentCodes();
-  const existingList = (await localDb.equipos.toArray()).filter(
+  const existingRaw = (await localDb.equipos.toArray()).filter(
     (item) => !deletedSet.has(item.codigo)
   );
+
+  // Cuando la nube real respondió con el listado autoritativo de reportes, depurar códigos obsoletos con 0 reportes
+  const existingList = [];
+  if (authoritativeCloud) {
+    const activeCodes = new Set();
+    for (const rep of [...cloudReports, ...localReports]) {
+      const code = normalizeEquipmentCode(rep?.codigo_equipo || '');
+      if (code && !deletedSet.has(code)) {
+        activeCodes.add(code);
+      }
+    }
+    const sampleCodes = new Set(INITIAL_SAMPLE_EQUIPOS.map((e) => e.codigo));
+    const RECENT_MANUAL_MS = 10 * 60 * 1000;
+    const nowMs = Date.now();
+
+    for (const item of existingRaw) {
+      if (!activeCodes.has(item.codigo)) {
+        const createdMs = item.creado_en ? new Date(item.creado_en).getTime() : 0;
+        const isFreshManual =
+          item.origen === 'manual' &&
+          !sampleCodes.has(item.codigo) &&
+          !item.sincronizado_desde_nube &&
+          !Number.isNaN(createdMs) &&
+          createdMs > 0 &&
+          nowMs - createdMs < RECENT_MANUAL_MS;
+        if (!isFreshManual) {
+          await localDb.equipos.delete(item.codigo);
+          continue;
+        }
+      }
+      existingList.push(item);
+    }
+  } else {
+    existingList.push(...existingRaw);
+  }
+
   const existingMap = new Map(existingList.map((item) => [item.codigo, item]));
   const newlyAddedCodes = [];
   const nowIso = new Date().toISOString();
