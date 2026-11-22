@@ -2882,7 +2882,7 @@ body.theme-night .reopen-label {
   }
 }
 
-/* Caja de fecha y acciones debajo del código de equipo (Columna 1) */
+/* Caja de fecha debajo del código de equipo (Columna 1) */
 .equip-date-box {
   background: #F8FAFC;
   border: 1.5px solid var(--border-subtle);
@@ -2894,21 +2894,6 @@ body.theme-night .reopen-label {
 body.theme-night .equip-date-box {
   background: #13263B;
   border-color: #4B79A8;
-}
-
-.equip-row-actions {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.35rem;
-}
-
-.equip-row-actions .btn-mine.btn-sm-mine {
-  padding: 0.32rem 0.4rem;
-  min-height: 36px;
-  font-size: 0.84rem;
-  width: 100%;
-  box-sizing: border-box;
-  white-space: nowrap;
 }
 
 /* Subfila Columna 1: días transcurridos desde la fecha inicial alineados con cada seguimiento */

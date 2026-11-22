@@ -1603,9 +1603,9 @@ export class CapturaReporteView {
             <table class="operational-table report-main-table">
               <thead>
                 <tr>
-                  <th style="width: 19%;">1. Equipo / Fecha</th>
+                  <th style="width: 16%;">1. Equipo / Fecha</th>
                   <th style="width: 19%;">2. Vista Previa (Inicial / Seg.)</th>
-                  <th style="width: 36%;">3. Observación Principal y Comentarios Posteriores</th>
+                  <th style="width: 39%;">3. Observación Principal y Comentarios Posteriores</th>
                   <th style="width: 14%;">4. Tipo / Prioridad</th>
                   <th style="width: 12%;">5. Estado</th>
                 </tr>
@@ -1658,7 +1658,7 @@ export class CapturaReporteView {
 
     const initialRowHtml = `
       <tr class="${initialRowClasses}" data-report-id="${this.escapeHtml(rep.id)}">
-        <!-- COL 1: EQUIPO / FECHA / ACCIONES -->
+        <!-- COL 1: EQUIPO / FECHA -->
         <td class="report-slot-cell report-equip-cell">
           <div style="display:flex; flex-direction:column; gap:0.45rem;">
             <button
@@ -1672,24 +1672,6 @@ export class CapturaReporteView {
             <div class="equip-date-box">
               <div style="font-size:0.74rem; color:var(--text-muted); font-weight:700;">📌 Fecha Inicial</div>
               <div style="font-size:0.96rem; font-weight:900; margin-top:0.12rem; white-space:nowrap;">📅 ${this.escapeHtml(formatFechaDDMMYYYY(rep.fecha))}</div>
-            </div>
-            <div class="equip-row-actions">
-              <button
-                type="button"
-                class="btn-mine btn-sm-mine btn-secondary"
-                data-open-edit-modal="${this.escapeHtml(rep.id)}"
-                title="Editar equipo, fecha, tipo, prioridad, observación o fotos de esta fila"
-              >
-                ✏️ Editar
-              </button>
-              <button
-                type="button"
-                class="btn-mine btn-sm-mine btn-danger"
-                data-request-delete-report="${this.escapeHtml(rep.id)}"
-                title="Borrar toda esta fila de observación y sus seguimientos"
-              >
-                🗑️ Borrar
-              </button>
             </div>
             <span style="font-size:0.75rem; color:var(--text-muted);">
               ID: ${this.escapeHtml(rep.id.slice(0, 8))}
@@ -1752,27 +1734,47 @@ export class CapturaReporteView {
               </div>
               <div style="font-size:0.92rem;">${this.escapeHtml(rep.observacion)}</div>
             </div>
-            <div style="margin-top:0.45rem; display:flex; flex-wrap:wrap; gap:0.4rem; align-items:center;">
-              <button
-                type="button"
-                class="btn-mine btn-sm-mine"
-                data-open-followup-modal="${this.escapeHtml(rep.id)}"
-              >
-                + Agregar Seguimiento (↳)
-              </button>
-              ${
-                !isReportLevantada
-                  ? `
+            <div style="margin-top:0.45rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.4rem;">
+              <div style="display:flex; flex-wrap:wrap; gap:0.4rem; align-items:center;">
                 <button
                   type="button"
-                  class="btn-mine btn-sm-mine btn-success"
-                  data-open-resolve-modal="${this.escapeHtml(rep.id)}"
+                  class="btn-mine btn-sm-mine"
+                  data-open-followup-modal="${this.escapeHtml(rep.id)}"
                 >
-                  ✅ Observación Levantada
+                  + Agregar Seguimiento (↳)
                 </button>
-              `
-                  : `<span class="badge badge-resolved">✅ Observación Levantada</span>`
-              }
+                ${
+                  !isReportLevantada
+                    ? `
+                  <button
+                    type="button"
+                    class="btn-mine btn-sm-mine btn-success"
+                    data-open-resolve-modal="${this.escapeHtml(rep.id)}"
+                  >
+                    ✅ Observación Levantada
+                  </button>
+                `
+                    : `<span class="badge badge-resolved">✅ Observación Levantada</span>`
+                }
+              </div>
+              <div style="display:flex; gap:0.35rem; flex-wrap:wrap; align-items:center; margin-left:auto;">
+                <button
+                  type="button"
+                  class="btn-mine btn-sm-mine btn-secondary"
+                  data-open-edit-modal="${this.escapeHtml(rep.id)}"
+                  title="Editar equipo, fecha, tipo, prioridad, observación o fotos de esta fila"
+                >
+                  ✏️ Editar
+                </button>
+                <button
+                  type="button"
+                  class="btn-mine btn-sm-mine btn-danger"
+                  data-request-delete-report="${this.escapeHtml(rep.id)}"
+                  title="Borrar toda esta fila de observación y sus seguimientos"
+                >
+                  🗑️ Borrar
+                </button>
+              </div>
             </div>
             ${
               isReportLevantada
