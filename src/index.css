@@ -452,13 +452,15 @@ body.theme-night .btn-success:hover:not(:disabled) {
 
 /* 1. Cuadro de Códigos de Equipos Creados */
 .equipment-chips-grid {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(265px, 1fr));
   gap: 0.6rem;
-  align-items: center;
+  align-items: stretch;
 }
 
 .equipment-chip {
+  width: 100%;
+  box-sizing: border-box;
   min-height: 46px;
   padding: 0.5rem 0.95rem;
   border-radius: 8px;
@@ -470,6 +472,7 @@ body.theme-night .btn-success:hover:not(:disabled) {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.5rem;
   box-shadow: 0 2px 4px rgba(0, 43, 92, 0.08);
 }
@@ -523,8 +526,11 @@ body.theme-night .chip-count {
 }
 
 .equipment-chip-group {
+  width: 100%;
+  box-sizing: border-box;
   display: inline-flex;
   align-items: stretch;
+  justify-content: space-between;
   border-radius: 8px;
   border: 2px solid var(--border-strong);
   background: #F8FAFC;
@@ -547,6 +553,8 @@ body.theme-night .chip-count {
 }
 
 .equipment-chip-group .equipment-chip-select {
+  flex: 1 1 auto;
+  min-width: 0;
   border: none;
   background: transparent;
   color: inherit;
@@ -557,8 +565,15 @@ body.theme-night .chip-count {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
+  justify-content: space-between;
   gap: 0.45rem;
   min-height: 44px;
+}
+
+.equipment-chip-group .equipment-chip-select > span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .equipment-chip-group.active .chip-count {
@@ -638,8 +653,13 @@ body.theme-night .equipment-chip-action-btn.delete:hover {
 /* 2. Formulario de alta legibilidad bajo sol fuerte y noche */
 .form-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(275px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.9rem;
+  align-items: stretch;
+}
+
+.modal-card .form-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .field-group {
@@ -649,7 +669,14 @@ body.theme-night .equipment-chip-action-btn.delete:hover {
   padding: 0.75rem 0.85rem;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  justify-content: space-between;
+  gap: 0.55rem;
+}
+
+.field-group > div:not(.new-code-inline):not(.norm-preview):not(.inline-field-error) {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
 }
 
 .field-label {
@@ -659,6 +686,8 @@ body.theme-night .equipment-chip-action-btn.delete:hover {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.4rem;
+  flex-wrap: wrap;
 }
 
 .input-mine,
@@ -717,6 +746,16 @@ body.theme-night .textarea-mine:focus {
   gap: 0.5rem;
   align-items: stretch;
   margin-top: 0.35rem;
+}
+
+.new-code-inline .input-mine {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.new-code-inline .btn-mine {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .norm-preview {
@@ -1454,6 +1493,8 @@ body.theme-night .module-tab-btn.active {
   border-radius: 999px;
   font-size: 0.84rem;
   font-weight: 900;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 body.theme-night .module-tab-badge {
@@ -2645,7 +2686,47 @@ body.view-mode-ingenieria .operativo-only-inline {
 }
 
 body.view-mode-operativo .module-navbar {
-  grid-template-columns: repeat(3, 1fr);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@media (max-width: 960px) {
+  .form-grid,
+  .modal-card .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  body.view-mode-operativo .module-navbar {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 768px) {
+  .equipment-chips-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.5rem;
+  }
+
+  .equipment-chips-grid > .equipment-chip[data-filter-code="TODOS"] {
+    grid-column: 1 / -1;
+  }
+
+  .equipment-chip-group .equipment-chip-select {
+    padding: 0.4rem 0.5rem;
+    font-size: 0.9rem;
+    gap: 0.3rem;
+  }
+
+  .equipment-chip-actions {
+    padding: 0 0.15rem;
+    gap: 0.08rem;
+  }
+
+  .equipment-chip-action-btn {
+    min-width: 30px;
+    padding: 0.28rem 0.32rem;
+    font-size: 0.84rem;
+  }
 }
 
 /* ==========================================================================

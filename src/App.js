@@ -312,7 +312,7 @@ export class AppController {
           }</span>
           <span class="module-tab-badge" id="tab-badge-m1">${
             isOperativo
-              ? 'Cámara • Equipos • Tabla Operativa (↳)'
+              ? 'Equipos • Tabla (↳)'
               : 'Captura + Seguimientos (↳)'
           }</span>
         </button>
@@ -329,7 +329,7 @@ export class AppController {
           }</span>
           <span class="module-tab-badge" id="tab-badge-levantadas">${
             this.stats.levantadasCount || 0
-          } cerradas • Cambiar estado</span>
+          } cerradas</span>
         </button>
 
         <button
@@ -386,7 +386,7 @@ export class AppController {
           }</span>
           <span class="module-tab-badge" id="tab-badge-m6">${
             isOperativo
-              ? `${this.stats.unificadosTotal} reportes • Descargar .xlsx`
+              ? `${this.stats.unificadosTotal} reportes • .xlsx`
               : `${this.stats.unificadosTotal} unificados • Exportar .xlsx`
           }</span>
         </button>
@@ -435,13 +435,23 @@ export class AppController {
     }
     if (tabBadgeM1) {
       tabBadgeM1.textContent = isOperativo
-        ? 'Cámara • Equipos • Tabla Operativa (↳)'
+        ? 'Equipos • Tabla (↳)'
         : 'Captura + Seguimientos (↳)';
     }
     if (tabTitleM6) {
       tabTitleM6.textContent = isOperativo
         ? '📊 2. Historial de Mina y Exportar Excel'
         : '📊 M6 — Historial Unificado y Excel';
+    }
+    const tabBadgeLevantadas = this.mountEl.querySelector('#tab-badge-levantadas');
+    if (tabBadgeLevantadas) {
+      tabBadgeLevantadas.textContent = `${this.stats.levantadasCount || 0} cerradas`;
+    }
+    const tabBadgeM6 = this.mountEl.querySelector('#tab-badge-m6');
+    if (tabBadgeM6) {
+      tabBadgeM6.textContent = isOperativo
+        ? `${this.stats.unificadosTotal} reportes • .xlsx`
+        : `${this.stats.unificadosTotal} unificados • Exportar .xlsx`;
     }
   }
 
@@ -1095,7 +1105,7 @@ export class AppController {
       storEl.textContent = `${formatBytes(this.stats.indexedDbBytes)} (Cuota: ${this.stats.storageEst.usageMB} MB)`;
     }
     if (tabBadgeLevantadas) {
-      tabBadgeLevantadas.textContent = `${this.stats.levantadasCount || 0} cerradas • Cambiar estado`;
+      tabBadgeLevantadas.textContent = `${this.stats.levantadasCount || 0} cerradas`;
     }
     if (tabBadgeM2) {
       tabBadgeM2.textContent = `${this.stats.totalReportes} guardados (${formatBytes(this.stats.indexedDbBytes)})`;
@@ -1115,7 +1125,7 @@ export class AppController {
     }
     if (tabBadgeM6) {
       tabBadgeM6.textContent = isOperativo
-        ? `${this.stats.unificadosTotal} reportes • Descargar .xlsx`
+        ? `${this.stats.unificadosTotal} reportes • .xlsx`
         : `${this.stats.unificadosTotal} unificados • Exportar .xlsx`;
     }
     if (authPill && authPillText) {

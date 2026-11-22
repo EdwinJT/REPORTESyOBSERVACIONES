@@ -114,11 +114,12 @@ export async function ensureInitialEquipmentCatalog() {
 }
 
 export function sortEquipmentList(list = []) {
-  return [...list].sort((a, b) => {
-    const tA = a.ultimo_uso || a.creado_en || '';
-    const tB = b.ultimo_uso || b.creado_en || '';
-    return tB.localeCompare(tA);
-  });
+  return [...list].sort((a, b) =>
+    String(a?.codigo || '').localeCompare(String(b?.codigo || ''), 'es', {
+      numeric: true,
+      sensitivity: 'base'
+    })
+  );
 }
 
 export async function getAllEquipments() {

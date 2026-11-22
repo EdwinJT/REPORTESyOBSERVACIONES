@@ -1204,94 +1204,101 @@ export class CapturaReporteView {
           </div>
 
           <div class="form-grid">
-            <!-- Selector desplegable + Creación manual de Código de Equipo -->
+            <!-- Tarjeta 1: Código de Equipo + Crear Nuevo -->
             <div class="field-group">
-              <label class="field-label" for="select-codigo-equipo">
-                <span>Código de Equipo (Lista Desplegable) *</span>
-                <span style="color:var(--accent-amber)">Activo: ${this.escapeHtml(this.form.codigo_equipo)}</span>
-              </label>
-              <select id="select-codigo-equipo" class="select-mine">
-                ${this.equipos
-                  .map(
-                    (eq) => `
-                  <option value="${this.escapeHtml(eq.codigo)}" ${
-                      eq.codigo === this.form.codigo_equipo ? 'selected' : ''
-                    }>
-                    ${this.escapeHtml(eq.codigo)} — ${this.escapeHtml(eq.categoria || 'Equipo')}
-                  </option>
-                `
-                  )
-                  .join('')}
-              </select>
+              <div>
+                <label class="field-label" for="select-codigo-equipo">
+                  <span>Código de Equipo (Lista Desplegable) *</span>
+                  <span style="color:var(--accent-amber)">Activo: ${this.escapeHtml(this.form.codigo_equipo)}</span>
+                </label>
+                <select id="select-codigo-equipo" class="select-mine">
+                  ${this.equipos
+                    .map(
+                      (eq) => `
+                    <option value="${this.escapeHtml(eq.codigo)}" ${
+                        eq.codigo === this.form.codigo_equipo ? 'selected' : ''
+                      }>
+                      ${this.escapeHtml(eq.codigo)} — ${this.escapeHtml(eq.categoria || 'Equipo')}
+                    </option>
+                  `
+                    )
+                    .join('')}
+                </select>
+              </div>
 
-              <div class="new-code-inline">
+              <div>
+                <div class="new-code-inline">
+                  <input
+                    type="text"
+                    id="input-nuevo-codigo"
+                    class="input-mine"
+                    placeholder="¿Equipo nuevo? Ej: 793f 05"
+                    value="${this.escapeHtml(this.form.nuevo_codigo_input)}"
+                  />
+                  <button type="button" class="btn-mine btn-primary" id="btn-crear-codigo">
+                    + Crear
+                  </button>
+                </div>
+                <div class="norm-preview">
+                  ${
+                    normPreview
+                      ? `Se normalizará como: <strong>${this.escapeHtml(normPreview)}</strong>`
+                      : 'Escribe minúsculas o espacios (ej. "793f 05" → "793F-05") y toca "+ Crear".'
+                  }
+                </div>
+              </div>
+            </div>
+
+            <!-- Tarjeta 2: Fecha + Tipo -->
+            <div class="field-group">
+              <div>
+                <label class="field-label" for="input-fecha-peru">
+                  <span>Fecha *</span>
+                  <span id="form-fecha-display" style="font-size:0.86rem; color:var(--accent-blue);">${this.escapeHtml(formatFechaDDMMYYYY(this.form.fecha))}</span>
+                </label>
                 <input
-                  type="text"
-                  id="input-nuevo-codigo"
+                  type="date"
+                  id="input-fecha-peru"
                   class="input-mine"
-                  placeholder="¿Equipo nuevo? Ej: 793f 05"
-                  value="${this.escapeHtml(this.form.nuevo_codigo_input)}"
+                  value="${this.escapeHtml(this.form.fecha)}"
                 />
-                <button type="button" class="btn-mine btn-primary" id="btn-crear-codigo">
-                  + Crear
-                </button>
               </div>
-              <div class="norm-preview">
-                ${
-                  normPreview
-                    ? `Se normalizará como: <strong>${this.escapeHtml(normPreview)}</strong>`
-                    : 'Escribe minúsculas o espacios (ej. "793f 05" → "793F-05") y toca "+ Crear".'
-                }
+
+              <div>
+                <label class="field-label" for="select-tipo">Tipo *</label>
+                <select id="select-tipo" class="select-mine">
+                  <option value="Observación" ${this.form.tipo === 'Observación' ? 'selected' : ''}>🔍 Observación</option>
+                  <option value="Reporte" ${this.form.tipo === 'Reporte' ? 'selected' : ''}>📄 Reporte</option>
+                </select>
               </div>
             </div>
 
-            <!-- Fecha + Tipo + Prioridad -->
+            <!-- Tarjeta 3: Prioridad + Calidad de Compresión de Foto -->
             <div class="field-group">
-              <label class="field-label" for="input-fecha-peru">
-                <span>Fecha *</span>
-                <span id="form-fecha-display" style="font-size:0.86rem; color:var(--accent-blue);">${this.escapeHtml(formatFechaDDMMYYYY(this.form.fecha))}</span>
-              </label>
-              <input
-                type="date"
-                id="input-fecha-peru"
-                class="input-mine"
-                value="${this.escapeHtml(this.form.fecha)}"
-              />
-
-              <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; margin-top: 0.45rem;">
-                <div>
-                  <label class="field-label" for="select-tipo">Tipo *</label>
-                  <select id="select-tipo" class="select-mine">
-                    <option value="Observación" ${this.form.tipo === 'Observación' ? 'selected' : ''}>🔍 Observación</option>
-                    <option value="Reporte" ${this.form.tipo === 'Reporte' ? 'selected' : ''}>📄 Reporte</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="field-label" for="select-prioridad">Prioridad *</label>
-                  <select id="select-prioridad" class="select-mine">
-                    <option value="Alta" ${this.form.prioridad === 'Alta' ? 'selected' : ''}>🔴 Alta</option>
-                    <option value="Media" ${this.form.prioridad === 'Media' ? 'selected' : ''}>🟡 Media</option>
-                    <option value="Baja" ${this.form.prioridad === 'Baja' ? 'selected' : ''}>🔵 Baja</option>
-                  </select>
-                </div>
+              <div>
+                <label class="field-label" for="select-prioridad">Prioridad *</label>
+                <select id="select-prioridad" class="select-mine">
+                  <option value="Alta" ${this.form.prioridad === 'Alta' ? 'selected' : ''}>🔴 Alta</option>
+                  <option value="Media" ${this.form.prioridad === 'Media' ? 'selected' : ''}>🟡 Media</option>
+                  <option value="Baja" ${this.form.prioridad === 'Baja' ? 'selected' : ''}>🔵 Baja</option>
+                </select>
               </div>
-            </div>
 
-            <!-- Calidad de Compresión de Foto -->
-            <div class="field-group">
-              <label class="field-label" for="select-calidad">
-                <span>Calidad de Compresión de Foto (P3) *</span>
-              </label>
-              <select id="select-calidad" class="select-mine">
-                <option value="estandar" ${this.form.calidad_compresion === 'estandar' ? 'selected' : ''}>
-                  ⚡ Estándar (&lt; 400 KB / máx. 1600 px) — Recomendado
-                </option>
-                <option value="alta" ${this.form.calidad_compresion === 'alta' ? 'selected' : ''}>
-                  🔎 Alta Nitidez (&lt; 800 KB / máx. 2048 px) — Placas / Series / Fisuras
-                </option>
-              </select>
-              <div class="norm-preview">
-                Toda foto se comprime en el dispositivo <strong>antes</strong> de guardarse en IndexedDB.
+              <div>
+                <label class="field-label" for="select-calidad">
+                  <span>Calidad de Compresión de Foto (P3) *</span>
+                </label>
+                <select id="select-calidad" class="select-mine">
+                  <option value="estandar" ${this.form.calidad_compresion === 'estandar' ? 'selected' : ''}>
+                    ⚡ Estándar (1600 px / &lt; 400 KB) — Recomendado
+                  </option>
+                  <option value="alta" ${this.form.calidad_compresion === 'alta' ? 'selected' : ''}>
+                    🔎 Alta Nitidez (2048 px / &lt; 800 KB) — Placas / Fisuras
+                  </option>
+                </select>
+                <div class="norm-preview">
+                  Toda foto se comprime en el dispositivo <strong>antes</strong> de guardarse en IndexedDB.
+                </div>
               </div>
             </div>
           </div>
