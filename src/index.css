@@ -1209,57 +1209,54 @@ body.theme-night .operational-table tbody tr:nth-child(even) {
 }
 
 .slot-initial {
-  min-height: 102px;
-  padding: 0.62rem 0.75rem;
-  border-radius: 8px;
-  background: var(--bg-initial-slot);
+  min-height: 82px;
+  padding: 0.2rem 0.35rem 0.2rem 0.65rem;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-main);
-  border: 2px solid var(--border-subtle);
-  border-left: 6px solid #DC2626;
+  border: none;
+  border-left: 4px solid #DC2626;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  box-shadow: 0 1px 3px rgba(0, 43, 92, 0.08);
+  box-shadow: none;
 }
 
 body.theme-night .slot-initial {
-  border-color: #3B6998;
   border-left-color: #EF4444;
 }
 
 .slot-followup {
-  min-height: 102px;
-  padding: 0.62rem 0.75rem;
-  border-radius: 8px;
-  background: #FFF7ED;
-  color: #3B1404;
-  border: 2px solid #F97316;
-  border-left: 6px solid #EA580C;
+  min-height: 76px;
+  padding: 0.2rem 0.35rem 0.2rem 0.65rem;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-main);
+  border: none;
+  border-left: 4px solid #EA580C;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  box-shadow: 0 1px 3px rgba(200, 75, 15, 0.14);
+  box-shadow: none;
 }
 
 body.theme-night .slot-followup {
-  background: #251508;
-  color: #FFF7ED;
-  border-color: var(--stracon-orange);
+  background: transparent;
+  color: #F8FAFC;
   border-left-color: var(--stracon-orange-bright);
 }
 
 .slot-followup.slot-resolved {
-  background: #DCFCE7;
+  background: transparent;
   color: #052E16;
-  border: 2px solid #16A34A;
-  border-left: 6px solid #146C2E;
-  box-shadow: 0 1px 3px rgba(20, 108, 46, 0.16);
+  border: none;
+  border-left: 4px solid #16A34A;
+  box-shadow: none;
 }
 
 body.theme-night .slot-followup.slot-resolved {
-  background: #0A2717;
+  background: transparent;
   color: #ECFDF5;
-  border-color: #22C55E;
   border-left-color: #4ADE80;
 }
 
@@ -1330,6 +1327,11 @@ body.theme-night .operational-table.report-main-table td.report-span-cell {
 
 .operational-table.report-main-table tbody tr.report-row-followup td.report-slot-cell {
   padding-top: 0.45rem;
+  background: #FFFBF5;
+}
+
+body.theme-night .operational-table.report-main-table tbody tr.report-row-followup td.report-slot-cell {
+  background: #171412;
 }
 
 .operational-table.report-main-table tbody tr.report-row-last td.report-slot-cell {
@@ -3475,32 +3477,32 @@ body.theme-night .equip-date-box {
 /* Subfila Columna 1: días transcurridos desde la fecha inicial alineados con cada seguimiento */
 .operational-table.report-main-table td.report-slot-cell > .elapsed-followup-slot {
   height: 100%;
-  min-height: 96px;
+  min-height: 76px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 0.22rem;
-  padding: 0.45rem 0.4rem;
-  border-radius: 8px;
-  background: #FFF7EE;
-  border: 1.5px dashed var(--stracon-orange);
+  padding: 0.2rem 0.25rem;
+  border-radius: 0;
+  background: transparent;
+  border: none;
   box-sizing: border-box;
 }
 
 .operational-table.report-main-table td.report-slot-cell > .elapsed-followup-slot.is-resolved {
-  background: #F0FDF4;
-  border-color: #16A34A;
+  background: transparent;
+  border: none;
 }
 
 body.theme-night .operational-table.report-main-table td.report-slot-cell > .elapsed-followup-slot {
-  background: #1B130B;
-  border-color: var(--stracon-orange);
+  background: transparent;
+  border: none;
 }
 
 body.theme-night .operational-table.report-main-table td.report-slot-cell > .elapsed-followup-slot.is-resolved {
-  background: #0A2717;
-  border-color: #22C55E;
+  background: transparent;
+  border: none;
 }
 
 .elapsed-days-badge {
