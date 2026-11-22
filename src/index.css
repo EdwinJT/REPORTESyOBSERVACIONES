@@ -445,6 +445,51 @@ body.theme-night .btn-success:hover:not(:disabled) {
   border-radius: 7px;
 }
 
+/* Opción A: Barra de acciones compacta en 1 sola fila para Col 3 de Tabla Principal */
+.obs-actions-row {
+  margin-top: 0.45rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.obs-actions-left,
+.obs-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: nowrap;
+}
+
+.obs-actions-right {
+  margin-left: auto;
+}
+
+.btn-mine.btn-obs-action {
+  min-height: 34px;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.86rem;
+  font-weight: 900;
+  border-radius: 7px;
+  white-space: nowrap;
+}
+
+.btn-mine.btn-icon-square {
+  width: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 7px;
+  font-size: 0.98rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Contenedor principal sobre fondo acero STRACON para contraste máximo con paneles */
 .main-container {
   max-width: 100%;
@@ -3036,6 +3081,21 @@ body.theme-night .m6-origin-pill.local-only {
     min-height: 38px;
     padding: 0.35rem 0.7rem;
     font-size: 0.88rem;
+  }
+
+  .btn-mine.btn-obs-action {
+    min-height: 34px;
+    padding: 0.24rem 0.58rem;
+    font-size: 0.84rem;
+  }
+
+  .btn-mine.btn-icon-square {
+    width: 34px;
+    min-width: 34px;
+    min-height: 34px;
+    height: 34px;
+    padding: 0;
+    font-size: 0.95rem;
   }
 
   .input-mine,

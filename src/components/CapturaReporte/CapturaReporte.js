@@ -1790,45 +1790,49 @@ export class CapturaReporteView {
               </div>
               <div style="font-size:0.92rem;">${this.escapeHtml(rep.observacion)}</div>
             </div>
-            <div style="margin-top:0.45rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.4rem;">
-              <div style="display:flex; flex-wrap:wrap; gap:0.4rem; align-items:center;">
+            <div class="obs-actions-row">
+              <div class="obs-actions-left">
                 <button
                   type="button"
-                  class="btn-mine btn-sm-mine"
+                  class="btn-mine btn-sm-mine btn-obs-action"
                   data-open-followup-modal="${this.escapeHtml(rep.id)}"
+                  title="Agregar seguimiento posterior (↳)"
                 >
-                  + Agregar Seguimiento (↳)
+                  + Seg. (↳)
                 </button>
                 ${
                   !isReportLevantada
                     ? `
                   <button
                     type="button"
-                    class="btn-mine btn-sm-mine btn-success"
+                    class="btn-mine btn-sm-mine btn-success btn-obs-action"
                     data-open-resolve-modal="${this.escapeHtml(rep.id)}"
+                    title="Marcar observación como levantada / cerrada"
                   >
-                    ✅ Observación Levantada
+                    ✅ Levantar
                   </button>
                 `
                     : `<span class="badge badge-resolved">✅ Observación Levantada</span>`
                 }
               </div>
-              <div style="display:flex; gap:0.35rem; flex-wrap:wrap; align-items:center; margin-left:auto;">
+              <div class="obs-actions-right">
                 <button
                   type="button"
-                  class="btn-mine btn-sm-mine btn-secondary"
+                  class="btn-mine btn-sm-mine btn-secondary btn-icon-square"
                   data-open-edit-modal="${this.escapeHtml(rep.id)}"
+                  aria-label="Editar observación"
                   title="Editar equipo, fecha, tipo, prioridad, observación o fotos de esta fila"
                 >
-                  ✏️ Editar
+                  ✏️
                 </button>
                 <button
                   type="button"
-                  class="btn-mine btn-sm-mine btn-danger"
+                  class="btn-mine btn-sm-mine btn-danger btn-icon-square"
                   data-request-delete-report="${this.escapeHtml(rep.id)}"
+                  aria-label="Borrar observación"
                   title="Borrar toda esta fila de observación y sus seguimientos"
                 >
-                  🗑️ Borrar
+                  🗑️
                 </button>
               </div>
             </div>
@@ -1973,28 +1977,30 @@ export class CapturaReporteView {
                 ${this.escapeHtml(seg.comentario)}
               </div>
             </div>
-            <div style="margin-top:0.45rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.4rem;">
+            <div class="obs-actions-row">
               <span style="font-size:0.73rem; color:var(--text-muted);">
                 ${isResolvedSeg ? `Cierre / Levantamiento (#${sIdx + 1})` : `Comentario posterior #${sIdx + 1}`}
               </span>
-              <div style="display:flex; gap:0.35rem; flex-wrap:wrap; align-items:center;">
+              <div class="obs-actions-right">
                 <button
                   type="button"
-                  class="btn-mine btn-sm-mine btn-secondary"
+                  class="btn-mine btn-sm-mine btn-secondary btn-icon-square"
                   data-edit-followup="${this.escapeHtml(rep.id)}"
                   data-seg-idx="${sIdx}"
+                  aria-label="Editar seguimiento"
                   title="Editar fecha, estado, comentario o fotos de este seguimiento"
                 >
-                  ✏️ Editar
+                  ✏️
                 </button>
                 <button
                   type="button"
-                  class="btn-mine btn-sm-mine btn-danger"
+                  class="btn-mine btn-sm-mine btn-danger btn-icon-square"
                   data-delete-followup="${this.escapeHtml(rep.id)}"
                   data-seg-idx="${sIdx}"
+                  aria-label="Borrar seguimiento"
                   title="Borrar solo este seguimiento (mantiene la observación principal)"
                 >
-                  🗑️ Borrar
+                  🗑️
                 </button>
               </div>
             </div>
