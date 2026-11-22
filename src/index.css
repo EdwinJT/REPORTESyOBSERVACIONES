@@ -3570,3 +3570,140 @@ body.theme-night .elapsed-days-badge.is-resolved {
   color: #DCFCE7;
   border-color: #4ADE80;
 }
+
+/* ==========================================================================
+   M6 — CENTRO DE REPORTE DIARIO DE GUARDIA E HISTORIAL (DÍA / NOCHE)
+   ========================================================================== */
+
+.m6-daily-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 0.7rem;
+  padding: 0.75rem;
+  margin-bottom: 0.85rem;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-subtle);
+}
+
+.m6-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.7rem;
+  margin-bottom: 0.9rem;
+}
+
+.m6-kpi-card {
+  padding: 0.7rem 0.8rem;
+  border-radius: 8px;
+  background: var(--bg-panel);
+  border: 2px solid var(--border-subtle);
+  text-align: center;
+}
+
+.m6-kpi-value {
+  font-size: 1.55rem;
+  font-weight: 900;
+  line-height: 1.15;
+  color: var(--stracon-navy);
+}
+
+.m6-kpi-label {
+  margin-top: 0.2rem;
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: var(--text-muted);
+}
+
+.m6-kpi-card.is-critical {
+  border-color: #FCA5A5;
+  background: #FEF2F2;
+}
+
+.m6-kpi-card.is-critical .m6-kpi-value,
+.m6-kpi-card.is-critical .m6-kpi-label {
+  color: #B91C1C;
+}
+
+.m6-kpi-card.is-active {
+  border-color: #FDBA74;
+}
+
+.m6-kpi-card.is-active .m6-kpi-value {
+  color: var(--stracon-orange-dark);
+}
+
+.m6-kpi-card.is-resolved {
+  border-color: #86EFAC;
+}
+
+.m6-kpi-card.is-resolved .m6-kpi-value {
+  color: var(--accent-green);
+}
+
+.m6-presets-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.m6-presets-row .btn-mine {
+  min-height: 34px;
+}
+
+.m6-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.22rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 900;
+  border: 1.5px solid;
+}
+
+.m6-status-pill.is-active {
+  background: #FEF3C7;
+  color: #B45309;
+  border-color: #FCD34D;
+}
+
+.m6-status-pill.is-resolved {
+  background: #DCFCE7;
+  color: #15803D;
+  border-color: #86EFAC;
+}
+
+body.theme-night .m6-kpi-value {
+  color: #60A5FA;
+}
+
+body.theme-night .m6-kpi-card.is-critical {
+  background: rgba(185, 28, 28, 0.22);
+  border-color: #EF4444;
+}
+
+body.theme-night .m6-kpi-card.is-critical .m6-kpi-value,
+body.theme-night .m6-kpi-card.is-critical .m6-kpi-label {
+  color: #FCA5A5;
+}
+
+body.theme-night .m6-kpi-card.is-active .m6-kpi-value {
+  color: #FB923C;
+}
+
+body.theme-night .m6-kpi-card.is-resolved .m6-kpi-value {
+  color: #4ADE80;
+}
+
+body.theme-night .m6-status-pill.is-active {
+  background: rgba(217, 119, 6, 0.24);
+  color: #FCD34D;
+  border-color: #F59E0B;
+}
+
+body.theme-night .m6-status-pill.is-resolved {
+  background: rgba(21, 128, 61, 0.24);
+  color: #86EFAC;
+  border-color: #22C55E;
+}
