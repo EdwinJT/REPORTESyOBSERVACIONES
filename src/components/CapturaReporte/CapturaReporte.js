@@ -231,7 +231,7 @@ export class CapturaReporteView {
   }
 
   async reloadData({ skipCloudFetch = false } = {}) {
-    const rawLocal = await localDb.reportes.toArray();
+    let rawLocal = await localDb.reportes.toArray();
     const authState = authService.getState();
     let mergedReports = [...rawLocal];
 
@@ -239,14 +239,41 @@ export class CapturaReporteView {
     if (authState.isRealCloudSession && (skipCloudFetch || pwaManager.getState().isOnline)) {
       try {
         let remoteRows = [];
+        let didAuthoritativeCloudFetch = false;
+
         if (skipCloudFetch && typeof supabase.getCachedCloudReports === 'function') {
           remoteRows = supabase.getCachedCloudReports();
         } else if (pwaManager.getState().isOnline) {
           const res = await supabase.from('reportes').select();
-          remoteRows = Array.isArray(res?.data) ? res.data : [];
+          if (res && !res.error && Array.isArray(res.data)) {
+            remoteRows = res.data;
+            didAuthoritativeCloudFetch = true;
+          }
         }
 
-        if (Array.isArray(remoteRows) && remoteRows.length > 0) {
+        // Reconciliación de eliminaciones multi-dispositivo:
+        // Si la consulta real a Supabase respondió sin error, cualquier reporte local que ya
+        // estaba sincronizado (o era demo local) y ya NO existe en la nube fue eliminado en otro dispositivo.
+        if (didAuthoritativeCloudFetch) {
+          const remoteIdSet = new Set(remoteRows.map((r) => r.id));
+          const survivingLocal = [];
+          for (const loc of rawLocal) {
+            const wasSyncedOrDemo =
+              loc.sincronizado_en_nube_real === true ||
+              loc.estado === 'sincronizado' ||
+              loc.desde_otro_dispositivo === true ||
+              loc.dispositivo === 'PC / Demo Local';
+            if (wasSyncedOrDemo && !remoteIdSet.has(loc.id)) {
+              await localDb.reportes.delete(loc.id);
+              continue;
+            }
+            survivingLocal.push(loc);
+          }
+          rawLocal = survivingLocal;
+          mergedReports = [...rawLocal];
+        }
+
+        if (didAuthoritativeCloudFetch || (Array.isArray(remoteRows) && remoteRows.length > 0)) {
           await syncEquipmentsFromCloudReports(remoteRows, rawLocal);
           const mergedMap = new Map();
           for (const loc of rawLocal) {

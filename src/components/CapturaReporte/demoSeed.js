@@ -5,6 +5,7 @@
  */
 
 import { localDb } from '../../db/localDb.js';
+import { supabase } from '../../config/supabaseClient.js';
 import { getFechaHoyPeru } from '../../utils/datePeru.js';
 
 function createSyntheticPlateBlob({ codigo, titulo, subtitulo, fecha, bgColor = '#1e293b', accentColor = '#f59e0b' }) {
@@ -80,6 +81,10 @@ function createSyntheticPlateBlob({ codigo, titulo, subtitulo, fecha, bgColor = 
 }
 
 export async function ensureDemoReportsIfEmpty() {
+  // Si el proyecto ya usa Supabase Cloud Real, no crear reportes demo fantasma locales (793F-05 / PALA-02)
+  const cfg = typeof supabase.getConfig === 'function' ? supabase.getConfig() : null;
+  if (cfg && !cfg.isPlaceholder) return;
+
   const count = await localDb.reportes.count();
   if (count > 0) return;
 
