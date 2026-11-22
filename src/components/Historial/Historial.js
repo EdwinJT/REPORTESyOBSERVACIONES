@@ -520,7 +520,8 @@ export class HistorialModuleView {
   }
 
   /**
-   * Exporta los reportes actualmente filtrados a un archivo Excel (.xlsx) sin URLs firmadas
+   * Exporta los reportes actualmente filtrados a Excel Diario formateado (.xls)
+   * con encabezado STRACON, datos de guardia, resumen ejecutivo y prioridades resaltadas (sin URLs firmadas).
    */
   handleExportFilteredToExcel() {
     const filtered = this.getFilteredReports();
@@ -532,14 +533,137 @@ export class HistorialModuleView {
       return;
     }
 
-    const exportAudit = exportFilteredReportsToExcel(filtered, this.filters, {
-      skipBrowserDownload: false
+    const hoyPeru = getFechaHoyPeru();
+    const hoyFormatted = formatFechaDDMMYYYY(hoyPeru);
+    const turno = this.escapeHtml(this.dailyMeta.turno);
+    const zona = this.escapeHtml(this.dailyMeta.zona || 'Operaciones STRACON');
+    const supervisor = this.escapeHtml(this.getEffectiveSupervisorName());
+    const desdeLbl = this.filters.fechaDesde ? formatFechaDDMMYYYY(this.filters.fechaDesde) : 'Inicio';
+    const hastaLbl = this.filters.fechaHasta ? formatFechaDDMMYYYY(this.filters.fechaHasta) : hoyFormatted;
+
+    const activasCount = filtered.filter((r) => !this.isReportLevantada(r)).length;
+    const criticosCount = filtered.filter((r) => !this.isReportLevantada(r) && r.prioridad === 'Alta').length;
+    const levantadasCount = filtered.filter((r) => this.isReportLevantada(r)).length;
+
+    const rowsHtml = filtered
+      .map((rep, idx) => {
+        const lev = this.isReportLevantada(rep);
+        const prioUpper = String(rep.prioridad || 'Media').toUpperCase();
+        const prioBg = prioUpper === 'ALTA' ? '#FEE2E2' : prioUpper === 'MEDIA' ? '#FEF3C7' : '#E0F2FE';
+        const prioFg = prioUpper === 'ALTA' ? '#991B1B' : prioUpper === 'MEDIA' ? '#92400E' : '#075985';
+        const statusBg = lev ? '#DCFCE7' : '#FEF3C7';
+        const statusFg = lev ? '#15803D' : '#B45309';
+
+        const segs = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
+        const segText = segs
+          .map(
+            (s, sIdx) =>
+              `↳ #${sIdx + 1} (${formatFechaDDMMYYYY(s.fecha)} · ${s.estado_seguimiento || 'Seguimiento'}): ${s.comentario || ''}`
+          )
+          .join('<br/>');
+
+        const photoPaths =
+          Array.isArray(rep?.fotos_rutas) && rep.fotos_rutas.length > 0
+            ? rep.fotos_rutas
+            : Array.isArray(rep?.fotos)
+              ? rep.fotos
+              : Array.isArray(rep?.fotos_locales)
+                ? rep.fotos_locales
+                : [];
+
+        return `
+          <tr style="background:${idx % 2 === 1 ? '#F8FAFC' : '#FFFFFF'};">
+            <td style="text-align:center; font-weight:bold;">${idx + 1}</td>
+            <td style="font-weight:bold; color:#002B5C;">${this.escapeHtml(rep.codigo_equipo)}</td>
+            <td style="white-space:nowrap;">${this.escapeHtml(formatFechaDDMMYYYY(rep.fecha))}${rep.hora_peru ? ` ${this.escapeHtml(rep.hora_peru)}` : ''}</td>
+            <td>${this.escapeHtml(rep.tipo || 'Observación')}</td>
+            <td style="background:${prioBg}; color:${prioFg}; font-weight:bold; text-align:center;">${this.escapeHtml(prioUpper)}</td>
+            <td style="background:${statusBg}; color:${statusFg}; font-weight:bold; text-align:center;">${lev ? 'Levantada' : 'Activa'}</td>
+            <td>${this.escapeHtml(rep.observacion || '')}</td>
+            <td>${segText || '—'}</td>
+            <td style="text-align:center;">${photoPaths.length}</td>
+          </tr>
+        `;
+      })
+      .join('');
+
+    const htmlExcel = `<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" lang="es">
+<head>
+<meta charset="UTF-8" />
+<style>
+  body { font-family: Arial, Calibri, sans-serif; color: #0F172A; font-size: 11pt; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border: 1px solid #CBD5E1; padding: 6px 8px; vertical-align: top; }
+</style>
+</head>
+<body>
+<table>
+  <tr>
+    <td colspan="9" style="background:#002B5C; color:#FFFFFF; font-size:15pt; font-weight:bold; padding:10px 12px; border-bottom:4px solid #F26522;">
+      STRACON · REPORTE DIARIO DE EQUIPOS MINEROS — ENTREGA DE GUARDIA
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" style="background:#F1F5F9; font-weight:bold;">Proyecto / Frente:</td>
+    <td colspan="3">${zona}</td>
+    <td colspan="2" style="background:#F1F5F9; font-weight:bold;">Turno / Guardia:</td>
+    <td colspan="2">${turno}</td>
+  </tr>
+  <tr>
+    <td colspan="2" style="background:#F1F5F9; font-weight:bold;">Supervisor Responsable:</td>
+    <td colspan="3">${supervisor}</td>
+    <td colspan="2" style="background:#F1F5F9; font-weight:bold;">Periodo / Emisión:</td>
+    <td colspan="2">${this.escapeHtml(desdeLbl)} → ${this.escapeHtml(hastaLbl)} (Emitido: ${hoyFormatted})</td>
+  </tr>
+  <tr>
+    <td colspan="2" style="background:#E2E8F0; font-weight:bold; text-align:center;">Total Reportes: ${filtered.length}</td>
+    <td colspan="2" style="background:#FEE2E2; color:#991B1B; font-weight:bold; text-align:center;">Críticos (Alta Activa): ${criticosCount}</td>
+    <td colspan="2" style="background:#FEF3C7; color:#92400E; font-weight:bold; text-align:center;">Activas: ${activasCount}</td>
+    <td colspan="3" style="background:#DCFCE7; color:#15803D; font-weight:bold; text-align:center;">Levantadas: ${levantadasCount}</td>
+  </tr>
+  <tr><td colspan="9" style="border:none; height:8px;"></td></tr>
+  <tr style="background:#002B5C; color:#FFFFFF; font-weight:bold; text-align:center;">
+    <th>#</th>
+    <th>Código Equipo</th>
+    <th>Fecha / Hora</th>
+    <th>Tipo</th>
+    <th>Prioridad</th>
+    <th>Estado</th>
+    <th>Observación Principal</th>
+    <th>Seguimientos (↳)</th>
+    <th>Cant. Fotos</th>
+  </tr>
+  ${rowsHtml}
+</table>
+</body>
+</html>`;
+
+    const fileName = `Reporte_Diario_STRACON_${hoyPeru}.xls`;
+    const blob = new Blob(['\uFEFF' + htmlExcel], {
+      type: 'application/vnd.ms-excel;charset=utf-8;'
     });
-    this.lastExcelExportAudit = exportAudit;
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+
+    const payload = buildExcelExportPayload(filtered, this.filters);
+    this.lastExcelExportAudit = {
+      ...payload,
+      fileName,
+      blobSizeBytes: blob.size,
+      totalExportedRows: filtered.length,
+      containsSignedUrls: false
+    };
 
     this.setBanner(
       'success',
-      `📊 Archivo Excel "${exportAudit.fileName}" (${formatBytes(exportAudit.blobSizeBytes)}) generado y descargado con ${exportAudit.totalExportedRows} fila(s) filtrada(s) y 0 URLs firmadas caducables.`
+      `📊 Excel Diario "${fileName}" (${formatBytes(blob.size)}) descargado con ${filtered.length} fila(s), datos de guardia STRACON y 0 URLs firmadas.`
     );
   }
 
@@ -549,36 +673,54 @@ export class HistorialModuleView {
     return authService.getState().userEmail || 'Supervisor de Guardia';
   }
 
-  getReportPrimaryThumbSrc(rep) {
+  async resolveReportPrimaryThumbSrc(rep) {
     const localBlob = Array.isArray(rep?.fotos_locales) ? rep.fotos_locales[0]?.blob : null;
     if (localBlob) {
       const objUrl = URL.createObjectURL(localBlob);
       this.objectUrls.push(objUrl);
       return objUrl;
     }
+
+    const existingSigned = Array.isArray(rep?.fotos_locales) ? rep.fotos_locales[0]?.signedUrl : '';
+    if (existingSigned) {
+      return existingSigned;
+    }
+
     const photoPaths =
       Array.isArray(rep?.fotos_rutas) && rep.fotos_rutas.length > 0
         ? rep.fotos_rutas
         : Array.isArray(rep?.fotos)
           ? rep.fotos
           : [];
-    const storagePath = photoPaths[0] || `${rep.creado_por || 'campo'}/${rep.id}/1.jpg`;
+    const storagePath = photoPaths[0] || '';
+
+    if (storagePath && pwaManager.getState().isOnline) {
+      try {
+        const signed = await supabase.storage.from('fotos').createSignedUrl(storagePath, 3600);
+        if (signed?.data?.signedUrl) {
+          return signed.data.signedUrl;
+        }
+      } catch {
+        // Usar vista previa SVG si falla la firma
+      }
+    }
+
     return buildCloudPhotoPreviewDataUri({
       codigoEquipo: rep.codigo_equipo,
       fecha: rep.fecha,
       hora: rep.hora_peru,
       photoNumber: 1,
       totalPhotos: Math.max(photoPaths.length, 1),
-      storagePath,
+      storagePath: storagePath || `${rep.creado_por || 'campo'}/${rep.id}/1.jpg`,
       calidad: rep.calidad_compresion
     });
   }
 
   /**
    * Genera una hoja imprimible / PDF formal de Entrega de Guardia con formato STRACON,
-   * resumen ejecutivo, miniaturas de evidencia y cuadro de firmas.
+   * resumen ejecutivo, fotos reales incrustadas y cuadro de firmas.
    */
-  handlePrintDailyReport() {
+  async handlePrintDailyReport() {
     const filtered = this.getFilteredReports();
     if (filtered.length === 0) {
       this.setBanner(
@@ -597,6 +739,15 @@ export class HistorialModuleView {
       return;
     }
 
+    win.document.open();
+    win.document.write(
+      '<p style="font-family:Arial,sans-serif;padding:24px;">⏳ Cargando fotos de evidencia para Entrega de Guardia...</p>'
+    );
+
+    const thumbSrcs = await Promise.all(
+      filtered.map((rep) => this.resolveReportPrimaryThumbSrc(rep))
+    );
+
     const hoyFormatted = formatFechaDDMMYYYY(getFechaHoyPeru());
     const turno = this.escapeHtml(this.dailyMeta.turno);
     const zona = this.escapeHtml(this.dailyMeta.zona || 'Operaciones STRACON');
@@ -609,10 +760,15 @@ export class HistorialModuleView {
     const levantadasCount = filtered.filter((r) => this.isReportLevantada(r)).length;
 
     const rowsHtml = filtered
-      .map((rep) => {
+      .map((rep, idx) => {
         const lev = this.isReportLevantada(rep);
         const segs = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
-        const thumbSrc = this.getReportPrimaryThumbSrc(rep);
+        const thumbSrc = thumbSrcs[idx];
+        const prioUpper = String(rep.prioridad || 'Media').toUpperCase();
+        const prioBg = prioUpper === 'ALTA' ? '#FEE2E2' : prioUpper === 'MEDIA' ? '#FEF3C7' : '#E0F2FE';
+        const prioFg = prioUpper === 'ALTA' ? '#991B1B' : prioUpper === 'MEDIA' ? '#92400E' : '#075985';
+        const prioBorder = prioUpper === 'ALTA' ? '#FCA5A5' : prioUpper === 'MEDIA' ? '#FCD34D' : '#7DD3FC';
+
         const segHtml = segs
           .map(
             (s) => `
@@ -637,7 +793,11 @@ export class HistorialModuleView {
               <strong>${this.escapeHtml(rep.observacion || '')}</strong>
               ${segHtml}
             </td>
-            <td style="font-weight:900;">${this.escapeHtml(String(rep.prioridad || '').toUpperCase())}</td>
+            <td style="text-align:center;">
+              <span style="display:inline-block; padding:2px 8px; border-radius:999px; font-weight:900; font-size:11px; background:${prioBg}; color:${prioFg}; border:1px solid ${prioBorder};">
+                ● ${this.escapeHtml(prioUpper)}
+              </span>
+            </td>
             <td style="font-weight:900; color:${lev ? '#15803D' : '#C2410C'};">
               ${lev ? '✅ Levantada' : '⚠️ Activa'}
             </td>
@@ -646,6 +806,7 @@ export class HistorialModuleView {
       })
       .join('');
 
+    win.document.open();
     win.document.write(`
       <!DOCTYPE html>
       <html lang="es">
@@ -1130,9 +1291,9 @@ export class HistorialModuleView {
                 type="button"
                 class="btn-mine btn-success"
                 id="btn-m6-export-excel"
-                title="Descargar archivo Excel (.xlsx) únicamente con los reportes filtrados actualmente"
+                title="Descargar Excel Diario (.xls) con encabezado STRACON, datos de guardia, resumen ejecutivo y prioridades resaltadas"
               >
-                📊 Excel Diario (.xlsx) · ${filteredReports.length} filas
+                📊 Excel Diario (.xls) · ${filteredReports.length} filas
               </button>
 
               <button
