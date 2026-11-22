@@ -3,7 +3,7 @@
  * Precaché del App Shell y Estado de Red / Modo Avión (Escenario P5).
  */
 
-export const APP_SHELL_MANIFEST_VERSION = 'v1.9.30-bloques-unificados-sin-barritas';
+export const APP_SHELL_MANIFEST_VERSION = 'v1.9.31-limpieza-columnas-4-y-5';
 export const APP_SHELL_CACHE_NAME = `mineria-pwa-appshell-${APP_SHELL_MANIFEST_VERSION}`;
 
 export const APP_SHELL_FILES = [

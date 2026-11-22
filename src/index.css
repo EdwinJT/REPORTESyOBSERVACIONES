@@ -1605,6 +1605,15 @@ body.theme-night .badge-baja .prio-dot {
   color: #38BDF8;
 }
 
+.tipo-text-subtle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+
 .status-synced-subtle {
   display: inline-flex;
   align-items: center;

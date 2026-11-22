@@ -1864,36 +1864,24 @@ export class CapturaReporteView {
 
         <!-- COL 4: TIPO / PRIORIDAD -->
         <td rowspan="${totalRows}" class="report-span-cell">
-          <div style="display:flex; flex-direction:column; gap:0.45rem;">
+          <div style="display:flex; flex-direction:column; gap:0.4rem;">
             <span class="badge badge-prio-pill ${prioClass}">
               <span class="prio-dot" aria-hidden="true">●</span> ${this.escapeHtml((rep.prioridad || 'Media').toUpperCase())}
             </span>
-            <span class="badge" style="border:1px solid var(--border-strong);">
+            <span class="tipo-text-subtle">
               ${rep.tipo === 'Observación' ? '🔍' : '📄'} ${this.escapeHtml(rep.tipo)}
-            </span>
-            <span style="font-size:0.75rem; color:var(--text-muted);">
-              Calidad: ${rep.calidad_compresion === 'alta' ? 'Alta Nitidez (2048px)' : 'Estándar (1600px)'}
             </span>
           </div>
         </td>
 
         <!-- COL 5: ESTADO -->
         <td rowspan="${totalRows}" class="report-span-cell">
-          <div style="display:flex; flex-direction:column; gap:0.5rem;">
+          <div style="display:flex; flex-direction:column; gap:0.4rem;">
             ${
               rep.sincronizado_en_nube_real
                 ? `<span class="status-synced-subtle">☁️ En nube</span>`
                 : `<span class="badge badge-pending">⏳ Pendiente</span>`
             }
-            <span style="font-size:0.75rem; color:var(--text-muted);">
-              ${
-                rep.desde_otro_dispositivo
-                  ? 'Descargado de Supabase Cloud'
-                  : rep.sincronizado_en_nube_real
-                    ? 'Confirmado en Supabase Cloud'
-                    : 'Guardado solo en este dispositivo'
-              }
-            </span>
           </div>
         </td>
       </tr>
