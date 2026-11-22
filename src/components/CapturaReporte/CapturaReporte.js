@@ -67,6 +67,7 @@ export class CapturaReporteView {
     this.obsValidationError = null;
     this.isCompressing = false;
     this.viewerModal = null; // { title, url, isVideo, meta }
+    this._viewerDrawState = null;
     this.followupModal = null; // { reporteId, codigo_equipo, fecha, estado_seguimiento, comentario, fotos_locales, video_local, validationError }
     this.deleteConfirmModal = null; // { reporteId, codigo_equipo, fecha, observacion, seguimientosCount, isDeleting }
     this.editReportModal = null; // { reporteId, codigo_equipo, fecha, tipo, prioridad, observacion, fotos_locales, isUploadingPhotos, uploadingCount, isSaving, validationError }
@@ -1686,7 +1687,7 @@ export class CapturaReporteView {
 
         <!-- COL 2: VISTA PREVIA (INICIAL) -->
         <td class="report-slot-cell">
-          <div class="slot-initial">
+          <div class="slot-initial slot-preview-top">
             <div style="font-size:0.75rem; color:var(--text-muted); font-weight:700; margin-bottom:0.25rem;">
               📌 Inicial (${(rep.fotos_locales || []).length} foto(s)${rep.video_local ? ' + 1 video' : ''})
             </div>
@@ -1874,7 +1875,7 @@ export class CapturaReporteView {
 
         <!-- COL 2: VISTA PREVIA SEGUIMIENTO #${sIdx + 1} -->
         <td class="report-slot-cell">
-          <div class="${slotClass}">
+          <div class="${slotClass} slot-preview-top">
             <div style="font-size:0.75rem; color:${labelColor}; font-weight:700; margin-bottom:0.25rem;">
               ${
                 isResolvedSeg ? `↳ Vista Cierre #${sIdx + 1}` : `↳ Vista Seg. #${sIdx + 1}`
@@ -1952,34 +1953,391 @@ export class CapturaReporteView {
     return `${initialRowHtml}${followupRowsHtml}`;
   }
 
+  initViewerDrawCanvas() {
+    if (!this.viewerModal?.isEditing || this.viewerModal?.isVideo) {
+      this._viewerDrawState = null;
+      return;
+    }
+
+    const img = this.rootEl.querySelector('#viewer-base-img');
+    const canvas = this.rootEl.querySelector('#viewer-draw-canvas');
+    if (!img || !canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const state = {
+      canvas,
+      ctx,
+      isDrawing: false,
+      activePointerId: null,
+      undoStack: []
+    };
+    this._viewerDrawState = state;
+
+    const setup = () => {
+      const w = img.naturalWidth || canvas.clientWidth || 1200;
+      const h = img.naturalHeight || canvas.clientHeight || 800;
+      if (w > 0 && h > 0 && (canvas.width !== w || canvas.height !== h)) {
+        canvas.width = w;
+        canvas.height = h;
+      }
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+    };
+
+    if (img.complete && img.naturalWidth > 0) {
+      setup();
+    } else {
+      img.addEventListener('load', setup, { once: true });
+    }
+
+    const getPos = (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = rect.width ? canvas.width / rect.width : 1;
+      const scaleY = rect.height ? canvas.height / rect.height : 1;
+      return {
+        x: (e.clientX - rect.left) * scaleX,
+        y: (e.clientY - rect.top) * scaleY
+      };
+    };
+
+    canvas.addEventListener('pointerdown', (e) => {
+      if (!this.viewerModal?.isEditing || this.viewerModal?.isSavingEdit) return;
+      e.preventDefault();
+      if (canvas.width === 0 || canvas.height === 0 || (canvas.width === 300 && canvas.height === 150 && img.naturalWidth > 0)) {
+        setup();
+      }
+      try {
+        canvas.setPointerCapture?.(e.pointerId);
+      } catch {
+        // Algunos eventos sintéticos no admiten pointer capture
+      }
+
+      if (canvas.width > 0 && canvas.height > 0) {
+        if (state.undoStack.length >= 20) state.undoStack.shift();
+        state.undoStack.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
+      }
+
+      const scaleFactor = Math.max(1, canvas.width / 800);
+      const size = Number(this.viewerModal.drawSize) || 5;
+      if (this.viewerModal.drawTool === 'eraser') {
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.lineWidth = size * 3 * scaleFactor;
+      } else {
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.strokeStyle = this.viewerModal.drawColor || '#EF4444';
+        ctx.lineWidth = size * scaleFactor;
+      }
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      const { x, y } = getPos(e);
+      state.isDrawing = true;
+      state.activePointerId = e.pointerId;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + 0.01, y + 0.01);
+      ctx.stroke();
+    });
+
+    canvas.addEventListener('pointermove', (e) => {
+      if (!state.isDrawing || state.activePointerId !== e.pointerId) return;
+      e.preventDefault();
+      const { x, y } = getPos(e);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+    });
+
+    const stopDrawing = (e) => {
+      if (!state.isDrawing || state.activePointerId !== e.pointerId) return;
+      state.isDrawing = false;
+      state.activePointerId = null;
+      ctx.closePath();
+      try {
+        canvas.releasePointerCapture?.(e.pointerId);
+      } catch {
+        // ignore
+      }
+    };
+
+    canvas.addEventListener('pointerup', stopDrawing);
+    canvas.addEventListener('pointercancel', stopDrawing);
+  }
+
+  async handleSaveEditedViewerPhoto() {
+    if (!this.viewerModal || this.viewerModal.isSavingEdit || this.viewerModal.isVideo) return;
+
+    const m = this.viewerModal;
+    const drawCanvas = this._viewerDrawState?.canvas || this.rootEl.querySelector('#viewer-draw-canvas');
+    const saveBtn = this.rootEl.querySelector('#btn-save-viewer-edit');
+    const cancelEditBtn = this.rootEl.querySelector('#btn-cancel-viewer-edit');
+
+    m.isSavingEdit = true;
+    m.editError = null;
+    if (saveBtn) {
+      saveBtn.disabled = true;
+      saveBtn.textContent = '⏳ Guardando...';
+    }
+    if (cancelEditBtn) cancelEditBtn.disabled = true;
+
+    let tempObjUrl = '';
+    try {
+      let baseBlob = m.blob || null;
+      if (!baseBlob && m.signedUrl) {
+        const res = await fetch(m.signedUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status} al descargar imagen base.`);
+        baseBlob = await res.blob();
+      }
+      if (!baseBlob) {
+        throw new Error('No se encontró la imagen original para guardar.');
+      }
+
+      tempObjUrl = URL.createObjectURL(baseBlob);
+      const baseImg = await new Promise((resolve, reject) => {
+        const im = new Image();
+        im.onload = () => resolve(im);
+        im.onerror = () => reject(new Error('No se pudo cargar la imagen base para exportar.'));
+        im.src = tempObjUrl;
+      });
+
+      const w = baseImg.naturalWidth || drawCanvas?.width || 1200;
+      const h = baseImg.naturalHeight || drawCanvas?.height || 800;
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = w;
+      exportCanvas.height = h;
+      const exportCtx = exportCanvas.getContext('2d');
+      exportCtx.drawImage(baseImg, 0, 0, w, h);
+
+      if (drawCanvas && drawCanvas.width > 0 && drawCanvas.height > 0) {
+        exportCtx.drawImage(drawCanvas, 0, 0, w, h);
+      }
+
+      const rawEditedBlob = await new Promise((resolve, reject) => {
+        exportCanvas.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error('No se pudo generar la imagen editada.'))),
+          'image/jpeg',
+          0.9
+        );
+      });
+
+      const editedFile = new File([rawEditedBlob], m.filename || 'foto_editada.jpg', {
+        type: 'image/jpeg'
+      });
+      const compressed = await compressPhotoFile(editedFile, m.calidad || 'estandar');
+
+      if (m.source === 'form') {
+        const prev = this.form.fotos_locales[m.fotoIndex];
+        if (prev) {
+          this.form.fotos_locales[m.fotoIndex] = {
+            ...prev,
+            ...compressed
+          };
+        }
+        this.viewerModal = {
+          ...m,
+          blob: compressed.blob,
+          signedUrl: '',
+          isEditing: false,
+          isSavingEdit: false,
+          editError: null,
+          meta: `Resolución: ${compressed.ancho}×${compressed.alto} px | Peso comprimido: ${formatBytes(compressed.peso_bytes)} (Editada)`
+        };
+        this._viewerDrawState = null;
+        this.render();
+        return;
+      }
+
+      const reporte = await this._getWritableReport(m.reporteId);
+      if (!reporte) throw new Error('No se encontró el reporte de esta foto.');
+
+      const targetList =
+        m.segIndex === null || m.segIndex === undefined
+          ? reporte.fotos_locales
+          : reporte.seguimientos?.[m.segIndex]?.fotos_locales;
+
+      if (!Array.isArray(targetList) || !targetList[m.fotoIndex]) {
+        throw new Error('No se encontró la foto objetivo dentro del reporte.');
+      }
+
+      const prevPhoto = targetList[m.fotoIndex];
+      targetList[m.fotoIndex] = {
+        ...prevPhoto,
+        ...compressed,
+        indice: prevPhoto.indice || m.fotoIndex + 1,
+        ruta_remota: prevPhoto.ruta_remota || undefined,
+        signedUrl: ''
+      };
+
+      reporte.estado = 'pendiente';
+      reporte.sincronizado_en_nube_real = false;
+      reporte.ultimo_error = null;
+      reporte.actualizado_en = new Date().toISOString();
+      await localDb.reportes.put(reporte);
+
+      if (pwaManager.getState().isOnline) {
+        try {
+          await syncQueue.processQueue({
+            triggerSource: 'Foto anotada en visor',
+            forceManual: true,
+            targetReportId: reporte.id,
+            perFileDelayMs: 25
+          });
+        } catch {
+          // Si falla la red momentáneamente, los cambios permanecen guardados en IndexedDB
+        }
+      }
+
+      await this.reloadData();
+      this.viewerModal = {
+        ...m,
+        blob: compressed.blob,
+        signedUrl: '',
+        isEditing: false,
+        isSavingEdit: false,
+        editError: null,
+        meta: `Editada: ${compressed.ancho}×${compressed.alto} px | Peso: ${formatBytes(compressed.peso_bytes)}`
+      };
+      this._viewerDrawState = null;
+      this.setBanner('success', 'Foto editada guardada correctamente.');
+    } catch (err) {
+      m.isSavingEdit = false;
+      m.editError = err?.message || 'No se pudo guardar la foto editada.';
+      this.render();
+    } finally {
+      if (tempObjUrl) URL.revokeObjectURL(tempObjUrl);
+    }
+  }
+
   renderViewerModal() {
     if (!this.viewerModal) return '';
-    const { title, blob, signedUrl, isVideo, meta } = this.viewerModal;
+    const {
+      title,
+      blob,
+      signedUrl,
+      isVideo,
+      meta,
+      isEditing,
+      drawTool = 'pencil',
+      drawColor = '#EF4444',
+      drawSize = 5,
+      isSavingEdit = false,
+      editError = null
+    } = this.viewerModal;
     const url = blob ? this.createObjectUrl(blob) : (signedUrl || '');
+    const colors = ['#EF4444', '#FACC15', '#F26522', '#38BDF8', '#FFFFFF'];
+
     return `
       <div class="modal-backdrop" id="modal-viewer-backdrop">
         <div class="modal-card">
           <div class="section-header">
             <h3 class="section-title">🔍 ${this.escapeHtml(title)}</h3>
             <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
-              <button type="button" class="btn-mine btn-sm-mine btn-primary" id="btn-download-viewer" ${!url ? 'disabled' : ''}>
+              ${
+                !isVideo && url
+                  ? isEditing
+                    ? `
+                      <button type="button" class="btn-mine btn-sm-mine btn-success" id="btn-save-viewer-edit" ${isSavingEdit ? 'disabled' : ''}>
+                        ${isSavingEdit ? '⏳ Guardando...' : '💾 Guardar Foto'}
+                      </button>
+                      <button type="button" class="btn-mine btn-sm-mine" id="btn-cancel-viewer-edit" ${isSavingEdit ? 'disabled' : ''}>
+                        ✕ Salir edición
+                      </button>
+                    `
+                    : `
+                      <button type="button" class="btn-mine btn-sm-mine btn-secondary" id="btn-toggle-viewer-edit">
+                        ✏️ Editar Foto
+                      </button>
+                    `
+                  : ''
+              }
+              <button type="button" class="btn-mine btn-sm-mine btn-primary" id="btn-download-viewer" ${!url || isSavingEdit ? 'disabled' : ''}>
                 ⬇️ Descargar
               </button>
-              <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-close-viewer">
+              <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-close-viewer" ${isSavingEdit ? 'disabled' : ''}>
                 ✕ Cerrar
               </button>
             </div>
           </div>
-          <div style="background:#0f172a; border-radius:10px; padding:0.5rem; overflow:hidden; text-align:center; max-height:72vh; display:flex; align-items:center; justify-content:center;">
+
+          ${
+            !isVideo && url && isEditing
+              ? `
+            <div class="photo-editor-toolbar">
+              <div class="photo-editor-group">
+                <button type="button" class="btn-mine btn-sm-mine ${drawTool === 'pencil' ? 'tool-active' : ''}" id="btn-tool-pencil">
+                  ✏️ Lápiz
+                </button>
+                <button type="button" class="btn-mine btn-sm-mine ${drawTool === 'eraser' ? 'tool-active' : ''}" id="btn-tool-eraser">
+                  🧽 Borrador
+                </button>
+              </div>
+
+              <div class="photo-editor-group" aria-label="Color de trazo">
+                ${colors
+                  .map(
+                    (c) => `
+                  <button
+                    type="button"
+                    class="draw-color-swatch ${drawColor === c ? 'active' : ''}"
+                    data-draw-color="${c}"
+                    style="background:${c};"
+                    title="Color ${c}"
+                    aria-label="Color ${c}"
+                  ></button>
+                `
+                  )
+                  .join('')}
+              </div>
+
+              <label class="draw-size-control" for="range-draw-size">
+                <span>Grosor:</span>
+                <input type="range" id="range-draw-size" min="2" max="16" value="${Number(drawSize) || 5}" />
+                <span id="label-draw-size">${Number(drawSize) || 5}px</span>
+              </label>
+
+              <div class="photo-editor-group">
+                <button type="button" class="btn-mine btn-sm-mine" id="btn-draw-undo" title="Deshacer último trazo">
+                  ↩️ Deshacer
+                </button>
+                <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-draw-clear" title="Limpiar todos los trazos">
+                  🧹 Limpiar
+                </button>
+              </div>
+            </div>
+          `
+              : ''
+          }
+
+          ${
+            editError
+              ? `<div id="viewer-edit-error" class="alert-banner alert-error" style="margin-bottom:0.65rem;">⚠️ ${this.escapeHtml(editError)}</div>`
+              : ''
+          }
+
+          <div class="photo-editor-viewer-box">
             ${
               isVideo
-                ? `<video src="${url}" controls autoplay style="max-width:100%; max-height:68vh; border-radius:6px;"></video>`
-                : `<img src="${url}" alt="Inspección de placa" style="max-width:100%; max-height:68vh; object-fit:contain; border-radius:6px;" />`
+                ? `<video src="${url}" controls autoplay style="max-width:100%; max-height:66vh; border-radius:6px;"></video>`
+                : `
+                  <div class="photo-editor-stage" id="photo-editor-stage">
+                    <img id="viewer-base-img" src="${url}" alt="Inspección de placa" />
+                    ${
+                      isEditing
+                        ? `<canvas id="viewer-draw-canvas" class="photo-editor-canvas"></canvas>`
+                        : ''
+                    }
+                  </div>
+                `
             }
           </div>
           <div style="margin-top:0.75rem; font-size:0.88rem; color:var(--text-muted); display:flex; justify-content:space-between; flex-wrap:wrap; gap:0.5rem; font-weight:700;">
             <span>${this.escapeHtml(meta || '')}</span>
-            <span>Verificación de legibilidad de placa / serie (Escenario P3)</span>
+            <span>${
+              isEditing
+                ? 'Dibuja directamente sobre la foto con el dedo o el mouse (Lápiz y Borrador solo afectan tus trazos).'
+                : 'Verificación de legibilidad de placa / serie (Escenario P3)'
+            }</span>
           </div>
         </div>
       </div>
@@ -2698,11 +3056,20 @@ export class CapturaReporteView {
         const foto = this.form.fotos_locales[idx];
         if (!foto) return;
         this.viewerModal = {
+          source: 'form',
+          fotoIndex: idx,
+          calidad: this.form.calidad_compresion || 'estandar',
           title: `Vista Previa Foto #${idx + 1} — ${this.form.codigo_equipo}`,
           blob: foto.blob,
           signedUrl: foto.signedUrl || '',
           filename: `${this.form.codigo_equipo || 'equipo'}_preview_${idx + 1}.jpg`,
           isVideo: false,
+          isEditing: false,
+          drawTool: 'pencil',
+          drawColor: '#EF4444',
+          drawSize: 5,
+          isSavingEdit: false,
+          editError: null,
           meta: `Resolución: ${foto.ancho}×${foto.alto} px | Peso comprimido: ${formatBytes(foto.peso_bytes)} (Original: ${formatBytes(foto.peso_original_bytes)})`
         };
         this.render();
@@ -2811,6 +3178,11 @@ export class CapturaReporteView {
         if (!foto) return;
 
         this.viewerModal = {
+          source: 'table',
+          reporteId: rep.id,
+          segIndex: segAttr === 'null' ? null : Number(segAttr),
+          fotoIndex: fIdx,
+          calidad: rep.calidad_compresion || 'estandar',
           title: `Equipo ${rep.codigo_equipo} — ${
             segAttr === 'null' ? 'Evidencia Inicial' : `Seguimiento #${Number(segAttr) + 1}`
           }`,
@@ -2820,6 +3192,12 @@ export class CapturaReporteView {
             segAttr === 'null' ? 'inicial' : `seg_${Number(segAttr) + 1}`
           }_foto_${fIdx + 1}.jpg`,
           isVideo: false,
+          isEditing: false,
+          drawTool: 'pencil',
+          drawColor: '#EF4444',
+          drawSize: 5,
+          isSavingEdit: false,
+          editError: null,
           meta: `Fecha: ${formatFechaDDMMYYYY(target.fecha || rep.fecha)} | Dimensiones: ${foto.ancho}×${foto.alto} px | ${foto.peso_bytes ? 'Peso: ' + formatBytes(foto.peso_bytes) : 'Imagen en Supabase Cloud'}`
         };
         this.render();
@@ -3136,17 +3514,98 @@ export class CapturaReporteView {
       );
     });
 
-    this.rootEl.querySelector('#btn-close-viewer')?.addEventListener('click', () => {
+    const closeViewerModal = () => {
+      if (this.viewerModal?.isSavingEdit) return;
       this.viewerModal = null;
+      this._viewerDrawState = null;
       this.render();
-    });
+    };
+
+    this.rootEl.querySelector('#btn-close-viewer')?.addEventListener('click', closeViewerModal);
 
     this.rootEl.querySelector('#modal-viewer-backdrop')?.addEventListener('click', (e) => {
       if (e.target.id === 'modal-viewer-backdrop') {
-        this.viewerModal = null;
-        this.render();
+        closeViewerModal();
       }
     });
+
+    this.rootEl.querySelector('#btn-toggle-viewer-edit')?.addEventListener('click', () => {
+      if (!this.viewerModal || this.viewerModal.isVideo) return;
+      this.viewerModal.isEditing = true;
+      this.viewerModal.editError = null;
+      this.render();
+    });
+
+    this.rootEl.querySelector('#btn-cancel-viewer-edit')?.addEventListener('click', () => {
+      if (!this.viewerModal || this.viewerModal.isSavingEdit) return;
+      this.viewerModal.isEditing = false;
+      this.viewerModal.editError = null;
+      this._viewerDrawState = null;
+      this.render();
+    });
+
+    this.rootEl.querySelector('#btn-save-viewer-edit')?.addEventListener('click', () => {
+      this.handleSaveEditedViewerPhoto();
+    });
+
+    const btnToolPencil = this.rootEl.querySelector('#btn-tool-pencil');
+    const btnToolEraser = this.rootEl.querySelector('#btn-tool-eraser');
+    btnToolPencil?.addEventListener('click', () => {
+      if (!this.viewerModal) return;
+      this.viewerModal.drawTool = 'pencil';
+      btnToolPencil.classList.add('tool-active');
+      btnToolEraser?.classList.remove('tool-active');
+    });
+
+    btnToolEraser?.addEventListener('click', () => {
+      if (!this.viewerModal) return;
+      this.viewerModal.drawTool = 'eraser';
+      btnToolEraser.classList.add('tool-active');
+      btnToolPencil?.classList.remove('tool-active');
+    });
+
+    this.rootEl.querySelectorAll('[data-draw-color]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (!this.viewerModal) return;
+        const color = btn.getAttribute('data-draw-color') || '#EF4444';
+        this.viewerModal.drawColor = color;
+        this.viewerModal.drawTool = 'pencil';
+        btnToolPencil?.classList.add('tool-active');
+        btnToolEraser?.classList.remove('tool-active');
+        this.rootEl
+          .querySelectorAll('[data-draw-color]')
+          .forEach((b) => b.classList.toggle('active', b === btn));
+      });
+    });
+
+    this.rootEl.querySelector('#range-draw-size')?.addEventListener('input', (e) => {
+      if (!this.viewerModal) return;
+      const val = Number(e.target.value) || 5;
+      this.viewerModal.drawSize = val;
+      const lbl = this.rootEl.querySelector('#label-draw-size');
+      if (lbl) lbl.textContent = `${val}px`;
+    });
+
+    this.rootEl.querySelector('#btn-draw-undo')?.addEventListener('click', () => {
+      const ds = this._viewerDrawState;
+      if (!ds || !ds.ctx || !ds.canvas) return;
+      const prev = ds.undoStack.pop();
+      if (prev) {
+        ds.ctx.putImageData(prev, 0, 0);
+      }
+    });
+
+    this.rootEl.querySelector('#btn-draw-clear')?.addEventListener('click', () => {
+      const ds = this._viewerDrawState;
+      if (!ds || !ds.ctx || !ds.canvas || ds.canvas.width <= 0 || ds.canvas.height <= 0) return;
+      if (ds.undoStack.length >= 20) ds.undoStack.shift();
+      ds.undoStack.push(ds.ctx.getImageData(0, 0, ds.canvas.width, ds.canvas.height));
+      ds.ctx.clearRect(0, 0, ds.canvas.width, ds.canvas.height);
+    });
+
+    if (this.viewerModal?.isEditing && !this.viewerModal?.isVideo) {
+      this.initViewerDrawCanvas();
+    }
 
     this.rootEl.querySelector('#btn-close-followup')?.addEventListener('click', () => {
       if (this.followupModal?.isSaving || this.followupModal?.isUploadingPhotos) return;
