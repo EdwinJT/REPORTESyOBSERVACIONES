@@ -1669,17 +1669,7 @@ export class CapturaReporteView {
                     </td>
                   </tr>
                 `
-                    : (() => {
-                        const eqColorMap = new Map();
-                        return reportesVisibles
-                          .map((rep, repIdx) => {
-                            if (!eqColorMap.has(rep.codigo_equipo)) {
-                              eqColorMap.set(rep.codigo_equipo, eqColorMap.size % 6);
-                            }
-                            return this.renderTableRow(rep, repIdx, eqColorMap.get(rep.codigo_equipo));
-                          })
-                          .join('');
-                      })()
+                    : reportesVisibles.map((rep, repIdx) => this.renderTableRow(rep, repIdx)).join('')
                 }
               </tbody>
             </table>
@@ -1698,13 +1688,12 @@ export class CapturaReporteView {
     this.attachEvents();
   }
 
-  renderTableRow(rep, repIdx = 0, eqColorIdx = 0) {
+  renderTableRow(rep, repIdx = 0) {
     const seguimientos = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
     const isReportLevantada = this.isReportLevantada(rep);
     const totalRows = 1 + seguimientos.length;
-    const eqAccentClass = `eq-accent-${eqColorIdx % 6}`;
     const groupStripeClass = repIdx % 2 === 1 ? 'report-group-even' : 'report-group-odd';
-    const initialRowClasses = `report-row-initial ${groupStripeClass} ${eqAccentClass}${seguimientos.length === 0 ? ' report-row-last' : ''}`;
+    const initialRowClasses = `report-row-initial ${groupStripeClass}${seguimientos.length === 0 ? ' report-row-last' : ''}`;
     const prioClass =
       rep.prioridad === 'Alta'
         ? 'badge-alta'
@@ -1870,8 +1859,8 @@ export class CapturaReporteView {
         <!-- COL 4: TIPO / PRIORIDAD -->
         <td rowspan="${totalRows}" class="report-span-cell">
           <div style="display:flex; flex-direction:column; gap:0.45rem;">
-            <span class="badge ${prioClass}">
-              ${rep.prioridad === 'Alta' ? '🔴' : rep.prioridad === 'Media' ? '🟡' : '🔵'} Prioridad ${this.escapeHtml(rep.prioridad)}
+            <span class="badge badge-prio-pill ${prioClass}">
+              <span class="prio-dot" aria-hidden="true">●</span> ${this.escapeHtml((rep.prioridad || 'Media').toUpperCase())}
             </span>
             <span class="badge" style="border:1px solid var(--border-strong);">
               ${rep.tipo === 'Observación' ? '🔍' : '📄'} ${this.escapeHtml(rep.tipo)}
@@ -1885,9 +1874,11 @@ export class CapturaReporteView {
         <!-- COL 5: ESTADO -->
         <td rowspan="${totalRows}" class="report-span-cell">
           <div style="display:flex; flex-direction:column; gap:0.5rem;">
-            <span class="badge ${rep.sincronizado_en_nube_real ? 'badge-synced' : 'badge-pending'}">
-              ${rep.sincronizado_en_nube_real ? '☁️ EN NUBE' : `⏳ ${this.escapeHtml(rep.estado.toUpperCase())}`}
-            </span>
+            ${
+              rep.sincronizado_en_nube_real
+                ? `<span class="status-synced-subtle">☁️ En nube</span>`
+                : `<span class="badge badge-pending">⏳ Pendiente</span>`
+            }
             <span style="font-size:0.75rem; color:var(--text-muted);">
               ${
                 rep.desde_otro_dispositivo
@@ -1908,7 +1899,7 @@ export class CapturaReporteView {
         const isResolvedSeg = this.isSegLevantada(seg);
         const slotClass = isResolvedSeg ? 'slot-followup slot-resolved' : 'slot-followup';
         const labelColor = isResolvedSeg ? '#15803d' : 'var(--accent-amber)';
-        const segRowClasses = `report-row-followup ${groupStripeClass} ${eqAccentClass}${isLastSeg ? ' report-row-last' : ''}`;
+        const segRowClasses = `report-row-followup ${groupStripeClass}${isLastSeg ? ' report-row-last' : ''}`;
         const segFotos = seg.fotos_locales || [];
 
         return `
