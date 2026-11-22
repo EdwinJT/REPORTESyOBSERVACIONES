@@ -52,6 +52,7 @@ export class AppController {
     this.pendingSpecialTargetModule = null;
     this.isTopbarCollapsed = typeof window !== 'undefined' ? window.innerWidth <= 980 : false;
     this.userToggledTopbar = false;
+    this.isManualSyncing = false;
     this._resizeHandler = null;
     this.pwaBanner = null;
     this.currentView = null;
@@ -133,12 +134,132 @@ export class AppController {
     await this.switchModule(this.activeModule);
   }
 
+  getTopbarSyncButtonState() {
+    const pwaState = pwaManager.getState();
+    const authState = authService.getState();
+    const syncState = syncQueue.getState();
+    const pendientes = Number(this.stats?.pendientes || 0);
+
+    if (this.isManualSyncing || syncState.isSyncing) {
+      return {
+        stateClass: 'is-syncing',
+        label: '🔄 Sincronizando...',
+        title: 'Sincronizando con Supabase Cloud...',
+        disabled: true
+      };
+    }
+
+    if (!pwaState.isOnline) {
+      if (pendientes > 0) {
+        return {
+          stateClass: 'is-pending',
+          label: `⏳ Faltan subir (${pendientes})`,
+          title: `Sin conexión: faltan subir ${pendientes} cambio(s) cuando regrese la señal`,
+          disabled: false
+        };
+      }
+      return {
+        stateClass: 'is-offline',
+        label: '🔴 Sin red (al día)',
+        title: 'Sin conexión a internet. No hay cambios pendientes por subir.',
+        disabled: false
+      };
+    }
+
+    if (!authState.isRealCloudSession) {
+      return {
+        stateClass: 'is-pending',
+        label: pendientes > 0 ? `⚠️ Conectar (${pendientes})` : '⚠️ Conectar nube',
+        title: 'Toca para conectar con Supabase Cloud y sincronizar',
+        disabled: false
+      };
+    }
+
+    if (pendientes > 0) {
+      return {
+        stateClass: 'is-pending',
+        label: `⬆️ Subir (${pendientes})`,
+        title: `Faltan subir ${pendientes} cambio(s) a la nube — toca para sincronizar ahora`,
+        disabled: false
+      };
+    }
+
+    return {
+      stateClass: 'is-synced',
+      label: '🔄 Actualizar • Al día',
+      title: 'Todo sincronizado en la nube — toca para actualizar y comprobar novedades',
+      disabled: false
+    };
+  }
+
+  async handleManualSyncAndRefresh() {
+    if (this.isManualSyncing || syncQueue.getState().isSyncing) return;
+
+    if (!authService.getState().isRealCloudSession) {
+      this.showQuickProfileModal = true;
+      this.renderQuickProfileModal();
+      return;
+    }
+
+    const pendientesAntes = Number(this.stats?.pendientes || 0);
+    if (!pwaManager.getState().isOnline) {
+      if (this.currentView && typeof this.currentView.setBanner === 'function') {
+        this.currentView.setBanner(
+          pendientesAntes > 0 ? 'error' : 'success',
+          pendientesAntes > 0
+            ? `Sin conexión a internet: aún faltan subir ${pendientesAntes} registro(s) cuando regrese la señal.`
+            : 'Sin conexión a internet. Todo lo anterior ya estaba subido en la nube.'
+        );
+      }
+      return;
+    }
+
+    this.isManualSyncing = true;
+    this.updateTopbarStats();
+
+    try {
+      await syncQueue.processQueue({
+        triggerSource: 'Botón Actualizar / Sincronizar',
+        forceManual: true
+      });
+      if (this.currentView && typeof this.currentView.reloadData === 'function') {
+        await this.currentView.reloadData();
+        this.currentView.render();
+      }
+      await this.refreshGlobalStats();
+      if (this.currentView && typeof this.currentView.setBanner === 'function') {
+        if (Number(this.stats?.pendientes || 0) === 0) {
+          this.currentView.setBanner(
+            'success',
+            'Sincronización completada: todo está actualizado y al día en la nube.'
+          );
+        } else {
+          this.currentView.setBanner(
+            'error',
+            `Actualización realizada, pero aún faltan subir ${this.stats.pendientes} registro(s) a la nube.`
+          );
+        }
+      }
+    } catch (err) {
+      if (this.currentView && typeof this.currentView.setBanner === 'function') {
+        this.currentView.setBanner(
+          'error',
+          err?.message || 'No se pudo completar la sincronización con la nube.'
+        );
+      }
+    } finally {
+      this.isManualSyncing = false;
+      this.updateTopbarStats();
+    }
+  }
+
   renderShell() {
     const pwaState = pwaManager.getState();
     const authState = authService.getState();
     const syncState = syncQueue.getState();
     const isOperativo = this.viewMode === 'operativo';
     const fechaHoyFormatted = formatFechaDDMMYYYY(getFechaHoyPeru());
+    const syncBtnState = this.getTopbarSyncButtonState();
 
     this.mountEl.innerHTML = `
       <header class="topbar ${this.isTopbarCollapsed ? 'is-collapsed' : ''}" id="main-topbar">
@@ -167,6 +288,15 @@ export class AppController {
           </div>
 
           <div class="topbar-main-actions">
+            <button
+              type="button"
+              class="btn-mine btn-sm-mine btn-topbar-sync ${syncBtnState.stateClass}"
+              id="btn-topbar-sync"
+              title="${syncBtnState.title}"
+              ${syncBtnState.disabled ? 'disabled' : ''}
+            >
+              ${syncBtnState.label}
+            </button>
             <div class="topbar-quick-status" title="Resumen rápido de fecha y red">
               <span>📅 ${fechaHoyFormatted}</span>
               <span id="topbar-quick-net-dot">${pwaState.isOnline ? '🟢' : '🔴'}</span>
@@ -1134,9 +1264,21 @@ export class AppController {
       }`;
       authPillText.textContent = authState.badgeText;
     }
+    const topbarSyncBtn = this.mountEl.querySelector('#btn-topbar-sync');
+    if (topbarSyncBtn) {
+      const syncBtnState = this.getTopbarSyncButtonState();
+      topbarSyncBtn.className = `btn-mine btn-sm-mine btn-topbar-sync ${syncBtnState.stateClass}`;
+      topbarSyncBtn.textContent = syncBtnState.label;
+      topbarSyncBtn.title = syncBtnState.title;
+      topbarSyncBtn.disabled = Boolean(syncBtnState.disabled);
+    }
   }
 
   bindGlobalEvents() {
+    this.mountEl.querySelector('#btn-topbar-sync')?.addEventListener('click', () => {
+      this.handleManualSyncAndRefresh();
+    });
+
     this.mountEl.querySelector('#btn-toggle-topbar')?.addEventListener('click', () => {
       this.toggleTopbarCollapsed(null, { isManual: true });
     });
@@ -1209,23 +1351,8 @@ export class AppController {
     });
 
     this.mountEl.querySelector('#pill-pending')?.addEventListener('click', async () => {
-      if (!authService.getState().isRealCloudSession) {
-        this.showQuickProfileModal = true;
-        this.renderQuickProfileModal();
-        return;
-      }
-      if (this.viewMode === 'operativo') {
-        // En modo supervisor, sincroniza directamente (sube pendientes y baja novedades de Supabase Cloud)
-        await syncQueue.processQueue({
-          triggerSource: 'Sincronización rápida Supervisor',
-          forceManual: true
-        });
-        await this.refreshGlobalStats();
-        this.updateTopbarStats();
-        if (this.currentView && typeof this.currentView.reloadData === 'function') {
-          await this.currentView.reloadData();
-          this.currentView.render();
-        }
+      if (this.viewMode === 'operativo' || !authService.getState().isRealCloudSession) {
+        await this.handleManualSyncAndRefresh();
       } else {
         this.switchModule('m5');
       }
