@@ -254,6 +254,27 @@ function writeCloudBucketFotos(objects) {
 class SupabaseResilientClient {
   constructor() {
     this.authListeners = new Set();
+    this._signedUrlCache = new Map();
+  }
+
+  markReportDeletedLocal(reportId) {
+    if (!reportId) return;
+    markReportIdDeleted(reportId);
+    const remaining = readCloudTableReportes().filter((r) => r.id !== reportId);
+    writeCloudTableReportes(remaining);
+  }
+
+  getCachedCloudReports() {
+    const deletedSet = readDeletedReportIds();
+    return readCloudTableReportes()
+      .filter((r) => {
+        if (isDeletedCloudRow(r)) {
+          markReportIdDeleted(r.id);
+          return false;
+        }
+        return !deletedSet.has(r.id);
+      })
+      .sort((a, b) => (b.creado_en || '').localeCompare(a.creado_en || ''));
   }
 
   getConfig() {
@@ -604,6 +625,7 @@ class SupabaseResilientClient {
           // Registrar en la réplica local del bucket 'fotos' con comportamiento estricto upsert: true
           const objects = readCloudBucketFotos();
           const key = `${bucketName}/${cleanPath}`;
+          this._signedUrlCache.delete(key);
           const existingIdx = objects.findIndex((o) => `${o.bucket_id}/${o.name}` === key);
           const nowIso = new Date().toISOString();
 
@@ -655,6 +677,15 @@ class SupabaseResilientClient {
           const cfg = this.getConfig();
           const session = this._readStoredSession();
           const cleanPath = String(objectPath || '').replace(/^\/+/, '');
+          const cacheKey = `${bucketName}/${cleanPath}`;
+          const cached = this._signedUrlCache.get(cacheKey);
+          if (cached && cached.expiresAtMs > Date.now() && cached.signedUrl) {
+            return {
+              data: { signedUrl: cached.signedUrl },
+              error: null
+            };
+          }
+
           const authBearer = this._getValidBearerToken(session, cfg);
 
           if (!cfg.isPlaceholder && navigator.onLine) {
@@ -676,8 +707,13 @@ class SupabaseResilientClient {
               if (res.ok) {
                 const json = await res.json();
                 if (json?.signedURL) {
+                  const fullSignedUrl = `${cfg.url.replace(/\/$/, '')}/storage/v1${json.signedURL}`;
+                  this._signedUrlCache.set(cacheKey, {
+                    signedUrl: fullSignedUrl,
+                    expiresAtMs: Date.now() + Math.max(60, expiresIn - 120) * 1000
+                  });
                   return {
-                    data: { signedUrl: `${cfg.url.replace(/\/$/, '')}/storage/v1${json.signedURL}` },
+                    data: { signedUrl: fullSignedUrl },
                     error: null
                   };
                 }
@@ -924,10 +960,7 @@ class SupabaseResilientClient {
         if (!reportId) {
           return { error: { message: 'ID de reporte requerido para eliminar.' } };
         }
-        markReportIdDeleted(reportId);
-
-        const remaining = readCloudTableReportes().filter((r) => r.id !== reportId);
-        writeCloudTableReportes(remaining);
+        this.markReportDeletedLocal(reportId);
 
         const cfg = this.getConfig();
         const session = this._readStoredSession();
@@ -962,38 +995,40 @@ class SupabaseResilientClient {
             console.warn('[Supabase] Error en DELETE remoto, aplicando respaldo:', err);
           }
 
-          // 2. Respaldo multi-dispositivo vía PATCH por si la política RLS remota no permite FOR DELETE
-          try {
-            const controller = new AbortController();
-            const timer = setTimeout(() => controller.abort(), 8000);
-            const patchRes = await fetch(filterEndpoint, {
-              method: 'PATCH',
-              headers: {
-                apikey: cfg.anonKey,
-                Authorization: `Bearer ${authBearer}`,
-                'Content-Type': 'application/json',
-                Prefer: 'return=minimal'
-              },
-              body: JSON.stringify({
-                observacion: DELETED_REPORT_MARKER,
-                seguimientos: [
-                  {
-                    id: 'deleted',
-                    estado_seguimiento: '__ELIMINADO__',
-                    fecha: '1970-01-01',
-                    comentario: 'Eliminado'
-                  }
-                ],
-                actualizado_en: new Date().toISOString()
-              }),
-              signal: controller.signal
-            });
-            clearTimeout(timer);
-            if (patchRes.ok) {
-              remoteDeletedOrMarked = true;
+          // 2. Respaldo multi-dispositivo vía PATCH solo si el DELETE no eliminó la fila remota
+          if (!remoteDeletedOrMarked) {
+            try {
+              const controller = new AbortController();
+              const timer = setTimeout(() => controller.abort(), 8000);
+              const patchRes = await fetch(filterEndpoint, {
+                method: 'PATCH',
+                headers: {
+                  apikey: cfg.anonKey,
+                  Authorization: `Bearer ${authBearer}`,
+                  'Content-Type': 'application/json',
+                  Prefer: 'return=minimal'
+                },
+                body: JSON.stringify({
+                  observacion: DELETED_REPORT_MARKER,
+                  seguimientos: [
+                    {
+                      id: 'deleted',
+                      estado_seguimiento: '__ELIMINADO__',
+                      fecha: '1970-01-01',
+                      comentario: 'Eliminado'
+                    }
+                  ],
+                  actualizado_en: new Date().toISOString()
+                }),
+                signal: controller.signal
+              });
+              clearTimeout(timer);
+              if (patchRes.ok) {
+                remoteDeletedOrMarked = true;
+              }
+            } catch (err) {
+              console.warn('[Supabase] Error en PATCH tombstone:', err);
             }
-          } catch (err) {
-            console.warn('[Supabase] Error en PATCH tombstone:', err);
           }
         }
 

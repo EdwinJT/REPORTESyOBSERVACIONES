@@ -5,7 +5,7 @@
  * abra en Modo Avión (Escenario P5) tras cerrarse completamente.
  */
 
-const CACHE_VERSION = 'v1.9.22-foto-arriba-editor-lapiz';
+const CACHE_VERSION = 'v1.9.23-optimizacion-velocidad-crud';
 const APP_SHELL_CACHE = `mineria-pwa-appshell-${CACHE_VERSION}`;
 
 const PRECACHE_ASSETS = [

@@ -143,120 +143,169 @@ export class CapturaReporteView {
     };
   }
 
+  _hasActiveOverlayModal() {
+    return Boolean(
+      this.viewerModal ||
+        this.followupModal ||
+        this.deleteConfirmModal ||
+        this.editReportModal ||
+        this.editEquipmentModal ||
+        this.deleteEquipmentModal
+    );
+  }
+
+  _triggerBackgroundReportSync(reporteId, triggerSource) {
+    if (!pwaManager.getState().isOnline) return;
+    syncQueue
+      .processQueue({
+        triggerSource,
+        forceManual: true,
+        targetReportId: reporteId,
+        perFileDelayMs: 25
+      })
+      .then(async () => {
+        await this.reloadData({ skipCloudFetch: true });
+        if (!this._hasActiveOverlayModal()) {
+          this.render();
+        }
+      })
+      .catch(() => {
+        // Permanece seguro en IndexedDB si falla la red momentáneamente
+      });
+  }
+
   async hydrateRemoteSeguimientos(remSegs, localSegs = []) {
     if (!Array.isArray(remSegs)) return [];
     const localList = Array.isArray(localSegs) ? localSegs : [];
-    const hydrated = [];
 
-    for (let sIdx = 0; sIdx < remSegs.length; sIdx++) {
-      const seg = remSegs[sIdx];
-      const matchedLocal =
-        localList.find((ls) => ls.id && seg.id && ls.id === seg.id) || localList[sIdx] || null;
-      const localFotos = Array.isArray(matchedLocal?.fotos_locales)
-        ? matchedLocal.fotos_locales
-        : [];
-      const hasLocalBlobs = localFotos.some((lf) => Boolean(lf?.blob));
+    return Promise.all(
+      remSegs.map(async (seg, sIdx) => {
+        const matchedLocal =
+          localList.find((ls) => ls.id && seg.id && ls.id === seg.id) || localList[sIdx] || null;
+        const localFotos = Array.isArray(matchedLocal?.fotos_locales)
+          ? matchedLocal.fotos_locales
+          : [];
+        const hasLocalBlobs = localFotos.some((lf) => Boolean(lf?.blob));
 
-      let segFotosLocales = [];
-      if (hasLocalBlobs) {
-        segFotosLocales = localFotos;
-      } else {
-        const segPaths = Array.isArray(seg.fotos) ? seg.fotos : [];
-        for (let si = 0; si < segPaths.length; si++) {
-          const signedSeg = await supabase.storage.from('fotos').createSignedUrl(segPaths[si], 3600);
-          segFotosLocales.push({
-            indice: si + 1,
-            blob: null,
-            signedUrl: signedSeg?.data?.signedUrl || '',
-            ruta_remota: segPaths[si],
-            peso_bytes: 0,
-            ancho: 1600,
-            alto: 1200
-          });
+        let segFotosLocales = [];
+        if (hasLocalBlobs) {
+          segFotosLocales = localFotos;
+        } else {
+          const segPaths = Array.isArray(seg.fotos) ? seg.fotos : [];
+          segFotosLocales = await Promise.all(
+            segPaths.map(async (segPath, si) => {
+              const signedSeg = await supabase.storage
+                .from('fotos')
+                .createSignedUrl(segPath, 3600);
+              return {
+                indice: si + 1,
+                blob: null,
+                signedUrl: signedSeg?.data?.signedUrl || '',
+                ruta_remota: segPath,
+                peso_bytes: 0,
+                ancho: 1600,
+                alto: 1200
+              };
+            })
+          );
         }
-      }
 
-      hydrated.push({
-        ...matchedLocal,
-        ...seg,
-        fotos_locales: segFotosLocales,
-        video_local: matchedLocal?.video_local || null
-      });
-    }
-
-    return hydrated;
+        return {
+          ...matchedLocal,
+          ...seg,
+          fotos_locales: segFotosLocales,
+          video_local: matchedLocal?.video_local || null
+        };
+      })
+    );
   }
 
-  async reloadData() {
+  async reloadData({ skipCloudFetch = false } = {}) {
     const rawLocal = await localDb.reportes.toArray();
     const authState = authService.getState();
     let mergedReports = [...rawLocal];
 
-    // Si hay sesión real en Supabase Cloud, descargar reportes de todos los dispositivos y fusionarlos en la tabla principal
-    if (authState.isRealCloudSession && pwaManager.getState().isOnline) {
+    // Si hay sesión real en Supabase Cloud, fusionar reportes remotos (desde red o desde caché local instantánea)
+    if (authState.isRealCloudSession && (skipCloudFetch || pwaManager.getState().isOnline)) {
       try {
-        const res = await supabase.from('reportes').select();
-        if (Array.isArray(res.data) && res.data.length > 0) {
-          await syncEquipmentsFromCloudReports(res.data, rawLocal);
+        let remoteRows = [];
+        if (skipCloudFetch && typeof supabase.getCachedCloudReports === 'function') {
+          remoteRows = supabase.getCachedCloudReports();
+        } else if (pwaManager.getState().isOnline) {
+          const res = await supabase.from('reportes').select();
+          remoteRows = Array.isArray(res?.data) ? res.data : [];
+        }
+
+        if (Array.isArray(remoteRows) && remoteRows.length > 0) {
+          await syncEquipmentsFromCloudReports(remoteRows, rawLocal);
           const mergedMap = new Map();
           for (const loc of rawLocal) {
             mergedMap.set(loc.id, loc);
           }
 
-          for (const rem of res.data) {
-            const existingLoc = mergedMap.get(rem.id);
-            if (existingLoc) {
-              // Preservar reportes locales con cambios/seguimientos pendientes por subir
-              if (existingLoc.estado === 'pendiente' || existingLoc.estado === 'sincronizando') {
-                mergedMap.set(rem.id, existingLoc);
-                continue;
-              }
-              const mergedSegs = await this.hydrateRemoteSeguimientos(
-                rem.seguimientos,
-                existingLoc.seguimientos
-              );
-              mergedMap.set(rem.id, {
-                ...existingLoc,
-                ...rem,
-                fotos_locales: existingLoc.fotos_locales || [],
-                video_local: existingLoc.video_local || null,
-                fotos_rutas: Array.isArray(rem.fotos) ? rem.fotos : existingLoc.fotos_rutas || [],
-                seguimientos: mergedSegs.length > 0 ? mergedSegs : existingLoc.seguimientos || [],
-                estado: 'sincronizado',
-                sincronizado_en_nube_real: true
-              });
-            } else {
-              // Reporte creado en otro celular o PC: firmar URLs para vista previa real en tabla principal
-              const cloudPhotos = [];
-              const remotePaths = Array.isArray(rem.fotos) ? rem.fotos : [];
-              for (let i = 0; i < remotePaths.length; i++) {
-                const signed = await supabase.storage.from('fotos').createSignedUrl(remotePaths[i], 3600);
-                cloudPhotos.push({
-                  indice: i + 1,
-                  blob: null,
-                  signedUrl: signed?.data?.signedUrl || '',
-                  ruta_remota: remotePaths[i],
-                  peso_bytes: 0,
-                  ancho: rem.calidad_compresion === 'alta' ? 2048 : 1600,
-                  alto: rem.calidad_compresion === 'alta' ? 1536 : 1200
+          await Promise.all(
+            remoteRows.map(async (rem) => {
+              const existingLoc = mergedMap.get(rem.id);
+              if (existingLoc) {
+                // Preservar reportes locales con cambios/seguimientos pendientes por subir
+                if (existingLoc.estado === 'pendiente' || existingLoc.estado === 'sincronizando') {
+                  mergedMap.set(rem.id, existingLoc);
+                  return;
+                }
+                const mergedSegs = await this.hydrateRemoteSeguimientos(
+                  rem.seguimientos,
+                  existingLoc.seguimientos
+                );
+                mergedMap.set(rem.id, {
+                  ...existingLoc,
+                  ...rem,
+                  fotos_locales: existingLoc.fotos_locales || [],
+                  video_local: existingLoc.video_local || null,
+                  fotos_rutas: Array.isArray(rem.fotos)
+                    ? rem.fotos
+                    : existingLoc.fotos_rutas || [],
+                  seguimientos:
+                    mergedSegs.length > 0 ? mergedSegs : existingLoc.seguimientos || [],
+                  estado: 'sincronizado',
+                  sincronizado_en_nube_real: true
+                });
+              } else {
+                // Reporte creado en otro celular o PC: firmar URLs en paralelo (con caché en memoria)
+                const remotePaths = Array.isArray(rem.fotos) ? rem.fotos : [];
+                const [cloudPhotos, cloudSegs] = await Promise.all([
+                  Promise.all(
+                    remotePaths.map(async (remotePath, i) => {
+                      const signed = await supabase.storage
+                        .from('fotos')
+                        .createSignedUrl(remotePath, 3600);
+                      return {
+                        indice: i + 1,
+                        blob: null,
+                        signedUrl: signed?.data?.signedUrl || '',
+                        ruta_remota: remotePath,
+                        peso_bytes: 0,
+                        ancho: rem.calidad_compresion === 'alta' ? 2048 : 1600,
+                        alto: rem.calidad_compresion === 'alta' ? 1536 : 1200
+                      };
+                    })
+                  ),
+                  this.hydrateRemoteSeguimientos(rem.seguimientos, [])
+                ]);
+
+                mergedMap.set(rem.id, {
+                  ...rem,
+                  es_nuevo_codigo: Boolean(rem.fuera_catalogo),
+                  fotos_locales: cloudPhotos,
+                  fotos_rutas: remotePaths,
+                  video_local: null,
+                  seguimientos: cloudSegs,
+                  estado: 'sincronizado',
+                  sincronizado_en_nube_real: true,
+                  desde_otro_dispositivo: true
                 });
               }
-
-              const cloudSegs = await this.hydrateRemoteSeguimientos(rem.seguimientos, []);
-
-              mergedMap.set(rem.id, {
-                ...rem,
-                es_nuevo_codigo: Boolean(rem.fuera_catalogo),
-                fotos_locales: cloudPhotos,
-                fotos_rutas: remotePaths,
-                video_local: null,
-                seguimientos: cloudSegs,
-                estado: 'sincronizado',
-                sincronizado_en_nube_real: true,
-                desde_otro_dispositivo: true
-              });
-            }
-          }
+            })
+          );
           mergedReports = Array.from(mergedMap.values());
         }
       } catch {
@@ -442,7 +491,7 @@ export class CapturaReporteView {
       this.form.codigo_equipo = record.codigo;
       this.form.nuevo_codigo_input = '';
       this.form.nueva_categoria_input = '';
-      await this.reloadData();
+      await this.reloadData({ skipCloudFetch: true });
 
       this.setBanner(
         'success',
@@ -601,7 +650,7 @@ export class CapturaReporteView {
     this.form.observaciones_adicionales = [];
     this.form.fecha = getFechaHoyPeru();
 
-    await this.reloadData();
+    await this.reloadData({ skipCloudFetch: true });
     this.setBanner(
       'success',
       `Reporte del equipo ${codigo} guardado en el dispositivo (IndexedDB) en estado "pendiente".`
@@ -609,7 +658,15 @@ export class CapturaReporteView {
 
     // Si hay conexión real y sesión válida en Supabase, iniciar subida automática en segundo plano
     if (pwaManager.getState().isOnline && authService.getState().isAuthenticatedValid) {
-      syncQueue.processQueue({ triggerSource: 'Nuevo reporte guardado en M1' }).catch(() => {});
+      syncQueue
+        .processQueue({ triggerSource: 'Nuevo reporte guardado en M1' })
+        .then(async () => {
+          await this.reloadData({ skipCloudFetch: true });
+          if (!this._hasActiveOverlayModal()) {
+            this.render();
+          }
+        })
+        .catch(() => {});
     }
   }
 
@@ -694,7 +751,7 @@ export class CapturaReporteView {
         const prevSeg = reporte.seguimientos[editSegIndex];
         if (!prevSeg) {
           this.followupModal = null;
-          await this.reloadData();
+          await this.reloadData({ skipCloudFetch: true });
           this.setBanner('error', 'No se encontró el seguimiento que intentabas editar.');
           return;
         }
@@ -731,25 +788,8 @@ export class CapturaReporteView {
       reporte.actualizado_en = new Date().toISOString();
       await localDb.reportes.put(reporte);
 
-      if (pwaManager.getState().isOnline) {
-        try {
-          await syncQueue.processQueue({
-            triggerSource: isEditMode
-              ? `Edición de seguimiento #${editSegIndex + 1}`
-              : isResolveMode
-                ? 'Observación levantada'
-                : 'Nuevo seguimiento agregado',
-            forceManual: true,
-            targetReportId: reporte.id,
-            perFileDelayMs: 25
-          });
-        } catch {
-          // Si falla la red momentáneamente, el seguimiento permanece seguro en IndexedDB
-        }
-      }
-
       this.followupModal = null;
-      await this.reloadData();
+      await this.reloadData({ skipCloudFetch: true });
       this.setBanner(
         'success',
         isEditMode
@@ -757,6 +797,15 @@ export class CapturaReporteView {
           : isResolveMode
             ? `Observación levantada registrada en el equipo ${reporte.codigo_equipo}.`
             : `Seguimiento (↳) agregado al reporte de ${reporte.codigo_equipo}.`
+      );
+
+      this._triggerBackgroundReportSync(
+        reporte.id,
+        isEditMode
+          ? `Edición de seguimiento #${editSegIndex + 1}`
+          : isResolveMode
+            ? 'Observación levantada'
+            : 'Nuevo seguimiento agregado'
       );
     } catch (err) {
       if (this.followupModal) {
@@ -793,24 +842,13 @@ export class CapturaReporteView {
     reporte.actualizado_en = new Date().toISOString();
     await localDb.reportes.put(reporte);
 
-    if (pwaManager.getState().isOnline) {
-      try {
-        await syncQueue.processQueue({
-          triggerSource: 'Reapertura de observación levantada',
-          forceManual: true,
-          targetReportId: reporte.id,
-          perFileDelayMs: 25
-        });
-      } catch {
-        // Permanece guardado en IndexedDB si hay corte momentáneo de red
-      }
-    }
-
-    await this.reloadData();
+    await this.reloadData({ skipCloudFetch: true });
     this.setBanner(
       'success',
       `Estado cambiado a "${estadoDestino}". La observación de ${reporte.codigo_equipo} volvió al Panel Principal.`
     );
+
+    this._triggerBackgroundReportSync(reporte.id, 'Reapertura de observación levantada');
   }
 
   // Eliminar un seguimiento individual o toda la fila de observación
@@ -831,7 +869,7 @@ export class CapturaReporteView {
           segIndex >= reporte.seguimientos.length
         ) {
           this.deleteConfirmModal = null;
-          await this.reloadData();
+          await this.reloadData({ skipCloudFetch: true });
           this.setBanner('error', 'No se encontró el seguimiento que intentabas borrar.');
           return;
         }
@@ -843,36 +881,32 @@ export class CapturaReporteView {
         reporte.actualizado_en = new Date().toISOString();
         await localDb.reportes.put(reporte);
 
-        if (pwaManager.getState().isOnline) {
-          try {
-            await syncQueue.processQueue({
-              triggerSource: `Borrado de seguimiento #${segNumber}`,
-              forceManual: true,
-              targetReportId: reporte.id,
-              perFileDelayMs: 25
-            });
-          } catch {
-            // Permanece guardado en IndexedDB si hay corte momentáneo de red
-          }
-        }
-
         this.deleteConfirmModal = null;
-        await this.reloadData();
+        await this.reloadData({ skipCloudFetch: true });
         this.setBanner(
           'success',
           `Se borró el Seguimiento #${segNumber} (${formatFechaDDMMYYYY(segFecha)}) del equipo ${codigo_equipo}. La observación principal se mantiene.`
         );
+
+        this._triggerBackgroundReportSync(reporte.id, `Borrado de seguimiento #${segNumber}`);
         return;
       }
 
       await localDb.reportes.delete(reporteId);
-      await supabase.from('reportes').delete(reporteId);
+      if (typeof supabase.markReportDeletedLocal === 'function') {
+        supabase.markReportDeletedLocal(reporteId);
+      }
       this.deleteConfirmModal = null;
-      await this.reloadData();
+      await this.reloadData({ skipCloudFetch: true });
       this.setBanner(
         'success',
         `Se borró completamente la observación del equipo ${codigo_equipo} (${formatFechaDDMMYYYY(fecha)}) y todos sus seguimientos.`
       );
+
+      supabase
+        .from('reportes')
+        .delete(reporteId)
+        .catch(() => {});
     } catch (err) {
       if (this.deleteConfirmModal) {
         this.deleteConfirmModal.isDeleting = false;
@@ -940,25 +974,14 @@ export class CapturaReporteView {
       await localDb.reportes.put(reporte);
       await createOrTouchEquipment(reporte.codigo_equipo);
 
-      if (pwaManager.getState().isOnline) {
-        try {
-          await syncQueue.processQueue({
-            triggerSource: 'Edición de observación',
-            forceManual: true,
-            targetReportId: reporte.id,
-            perFileDelayMs: 25
-          });
-        } catch {
-          // Si falla la red momentáneamente, los cambios permanecen guardados en IndexedDB
-        }
-      }
-
       this.editReportModal = null;
-      await this.reloadData();
+      await this.reloadData({ skipCloudFetch: true });
       this.setBanner(
         'success',
         `Cambios guardados en la observación del equipo ${reporte.codigo_equipo} (${formatFechaDDMMYYYY(reporte.fecha)}).`
       );
+
+      this._triggerBackgroundReportSync(reporte.id, 'Edición de observación');
     } catch (err) {
       if (this.editReportModal) {
         this.editReportModal.isSaving = false;
@@ -1013,18 +1036,7 @@ export class CapturaReporteView {
           await localDb.reportes.put(rep);
           updatedReportsCount++;
 
-          if (pwaManager.getState().isOnline) {
-            try {
-              await syncQueue.processQueue({
-                triggerSource: 'Renombrado de código de equipo',
-                forceManual: true,
-                targetReportId: rep.id,
-                perFileDelayMs: 25
-              });
-            } catch {
-              // Permanece en cola local pendiente si hay corte de red
-            }
-          }
+          this._triggerBackgroundReportSync(rep.id, 'Renombrado de código de equipo');
         }
 
         if (this.form.codigo_equipo === oldCodigo) {
@@ -1036,7 +1048,7 @@ export class CapturaReporteView {
       }
 
       this.editEquipmentModal = null;
-      await this.reloadData();
+      await this.reloadData({ skipCloudFetch: true });
       this.setBanner(
         'success',
         res.renamed
@@ -1074,7 +1086,13 @@ export class CapturaReporteView {
         const affectedReports = this.reportes.filter((r) => r.codigo_equipo === codigo);
         for (const r of affectedReports) {
           await localDb.reportes.delete(r.id);
-          await supabase.from('reportes').delete(r.id);
+          if (typeof supabase.markReportDeletedLocal === 'function') {
+            supabase.markReportDeletedLocal(r.id);
+          }
+          supabase
+            .from('reportes')
+            .delete(r.id)
+            .catch(() => {});
           deletedReportsCount++;
         }
       }
@@ -1084,7 +1102,7 @@ export class CapturaReporteView {
       }
 
       this.deleteEquipmentModal = null;
-      await this.reloadData();
+      await this.reloadData({ skipCloudFetch: true });
 
       if (this.form.codigo_equipo === codigo) {
         this.form.codigo_equipo = this.equipos[0]?.codigo || '';
@@ -2175,20 +2193,7 @@ export class CapturaReporteView {
       reporte.actualizado_en = new Date().toISOString();
       await localDb.reportes.put(reporte);
 
-      if (pwaManager.getState().isOnline) {
-        try {
-          await syncQueue.processQueue({
-            triggerSource: 'Foto anotada en visor',
-            forceManual: true,
-            targetReportId: reporte.id,
-            perFileDelayMs: 25
-          });
-        } catch {
-          // Si falla la red momentáneamente, los cambios permanecen guardados en IndexedDB
-        }
-      }
-
-      await this.reloadData();
+      await this.reloadData({ skipCloudFetch: true });
       this.viewerModal = {
         ...m,
         blob: compressed.blob,
@@ -2200,6 +2205,8 @@ export class CapturaReporteView {
       };
       this._viewerDrawState = null;
       this.setBanner('success', 'Foto editada guardada correctamente.');
+
+      this._triggerBackgroundReportSync(reporte.id, 'Foto anotada en visor');
     } catch (err) {
       m.isSavingEdit = false;
       m.editError = err?.message || 'No se pudo guardar la foto editada.';
