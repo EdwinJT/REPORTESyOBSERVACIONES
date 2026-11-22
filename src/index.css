@@ -1201,7 +1201,7 @@ body.theme-night .operational-table tbody tr:nth-child(even) {
   background: var(--bg-initial-slot);
   color: var(--text-main);
   border: 2px solid var(--border-subtle);
-  border-left: 5px solid var(--stracon-blue);
+  border-left: 6px solid #DC2626;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -1210,7 +1210,7 @@ body.theme-night .operational-table tbody tr:nth-child(even) {
 
 body.theme-night .slot-initial {
   border-color: #3B6998;
-  border-left-color: #60A5FA;
+  border-left-color: #EF4444;
 }
 
 .slot-followup {
@@ -1331,10 +1331,6 @@ tr.eq-accent-5 { --eq-accent: #4338CA; --eq-accent-hover: #3730A3; }
   background: var(--eq-accent-hover);
   border-color: var(--eq-accent-hover);
   color: #FFFFFF;
-}
-
-.operational-table.report-main-table tbody tr[class*="eq-accent-"] .slot-initial {
-  border-left-color: var(--eq-accent);
 }
 
 .slot-preview-top {
