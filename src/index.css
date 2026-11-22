@@ -1209,13 +1209,12 @@ body.theme-night .operational-table tbody tr:nth-child(even) {
 }
 
 .slot-initial {
-  min-height: 82px;
-  padding: 0.2rem 0.35rem 0.2rem 0.65rem;
+  min-height: 78px;
+  padding: 0.2rem 0.35rem;
   border-radius: 0;
   background: transparent;
   color: var(--text-main);
   border: none;
-  border-left: 4px solid #DC2626;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -1223,17 +1222,16 @@ body.theme-night .operational-table tbody tr:nth-child(even) {
 }
 
 body.theme-night .slot-initial {
-  border-left-color: #EF4444;
+  border: none;
 }
 
 .slot-followup {
-  min-height: 76px;
-  padding: 0.2rem 0.35rem 0.2rem 0.65rem;
+  min-height: 72px;
+  padding: 0.2rem 0.35rem;
   border-radius: 0;
   background: transparent;
   color: var(--text-main);
   border: none;
-  border-left: 4px solid #EA580C;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -1243,30 +1241,31 @@ body.theme-night .slot-initial {
 body.theme-night .slot-followup {
   background: transparent;
   color: #F8FAFC;
-  border-left-color: var(--stracon-orange-bright);
+  border: none;
 }
 
 .slot-followup.slot-resolved {
   background: transparent;
   color: #052E16;
   border: none;
-  border-left: 4px solid #16A34A;
   box-shadow: none;
 }
 
 body.theme-night .slot-followup.slot-resolved {
   background: transparent;
   color: #ECFDF5;
-  border-left-color: #4ADE80;
+  border: none;
 }
 
 body.theme-night .slot-followup.slot-resolved [style*="#15803d"] {
   color: #4ADE80 !important;
 }
 
-/* Tabla Principal con sub-filas reales (rowspan) para alineación exacta en celular y PC */
+/* Tabla Principal con bloques unificados por observación + sus seguimientos */
 .operational-table.report-main-table {
   min-width: 820px;
+  border: none;
+  background: transparent;
 }
 
 .operational-table.report-main-table tbody tr {
@@ -1274,45 +1273,46 @@ body.theme-night .slot-followup.slot-resolved [style*="#15803d"] {
   background: transparent;
 }
 
-.operational-table.report-main-table tbody tr.report-group-odd {
+.operational-table.report-main-table tbody tr.report-group-odd,
+.operational-table.report-main-table tbody tr.report-group-even {
   background: #FFFFFF;
 }
 
-.operational-table.report-main-table tbody tr.report-group-even {
-  background: #EEF2F6;
-}
-
-body.theme-night .operational-table.report-main-table tbody tr.report-group-odd {
+body.theme-night .operational-table.report-main-table tbody tr.report-group-odd,
+body.theme-night .operational-table.report-main-table tbody tr.report-group-even {
   background: #0D1B2A;
 }
 
-body.theme-night .operational-table.report-main-table tbody tr.report-group-even {
-  background: #13263B;
+.operational-table.report-main-table tbody tr.report-block-spacer td {
+  height: 12px;
+  padding: 0 !important;
+  border: none !important;
+  background: var(--bg-page) !important;
 }
 
 .operational-table.report-main-table tbody tr.report-row-initial td {
-  border-top: 3px solid #94A3B8;
+  border-top: 2.5px solid #002B5C;
 }
 
-.operational-table.report-main-table tbody tr.report-row-initial:first-child td {
-  border-top: none;
+.operational-table.report-main-table tbody tr.report-row-initial td:last-child {
+  border-right: 2px solid #002B5C;
 }
 
 body.theme-night .operational-table.report-main-table tbody tr.report-row-initial td {
-  border-top-color: #4B79A8;
+  border-top-color: #60A5FA;
 }
 
-body.theme-night .operational-table.report-main-table tbody tr.report-row-initial:first-child td {
-  border-top: none;
+body.theme-night .operational-table.report-main-table tbody tr.report-row-initial td:last-child {
+  border-right-color: #60A5FA;
 }
 
 .operational-table.report-main-table td.report-span-cell {
-  border-bottom: 3px solid #94A3B8;
+  border-bottom: 2.5px solid #002B5C;
   vertical-align: top;
 }
 
 body.theme-night .operational-table.report-main-table td.report-span-cell {
-  border-bottom-color: #4B79A8;
+  border-bottom-color: #60A5FA;
 }
 
 .operational-table.report-main-table td.report-slot-cell {
@@ -1321,25 +1321,29 @@ body.theme-night .operational-table.report-main-table td.report-span-cell {
 }
 
 .operational-table.report-main-table tbody tr:not(.report-row-last) td.report-slot-cell {
-  border-bottom: 1px dashed var(--border-subtle);
+  border-bottom: 1px dashed #CBD5E1;
   padding-bottom: 0.45rem;
+}
+
+body.theme-night .operational-table.report-main-table tbody tr:not(.report-row-last) td.report-slot-cell {
+  border-bottom-color: #2D4E73;
 }
 
 .operational-table.report-main-table tbody tr.report-row-followup td.report-slot-cell {
   padding-top: 0.45rem;
-  background: #FFFBF5;
+  background: #F8FAFC;
 }
 
 body.theme-night .operational-table.report-main-table tbody tr.report-row-followup td.report-slot-cell {
-  background: #171412;
+  background: #112236;
 }
 
 .operational-table.report-main-table tbody tr.report-row-last td.report-slot-cell {
-  border-bottom: 3px solid #94A3B8;
+  border-bottom: 2.5px solid #002B5C;
 }
 
 body.theme-night .operational-table.report-main-table tbody tr.report-row-last td.report-slot-cell {
-  border-bottom-color: #4B79A8;
+  border-bottom-color: #60A5FA;
 }
 
 .operational-table.report-main-table td.report-slot-cell > .slot-initial,
@@ -1348,10 +1352,14 @@ body.theme-night .operational-table.report-main-table tbody tr.report-row-last t
   box-sizing: border-box;
 }
 
-/* Código de equipo uniforme en Azul Marino STRACON (sin efecto arcoíris) */
+/* Barra izquierda continua en Azul Marino STRACON que une observación + seguimientos */
 .operational-table.report-main-table tbody td.report-equip-cell,
 .operational-table.report-main-table tbody td.report-elapsed-cell {
-  border-left: 4px solid #002B5C;
+  border-left: 6px solid #002B5C;
+}
+
+.operational-table.report-main-table tbody td.report-elapsed-cell {
+  padding-left: 0.85rem;
 }
 
 .operational-table.report-main-table tbody td.report-equip-cell button[data-filter-code] {
@@ -3477,32 +3485,33 @@ body.theme-night .equip-date-box {
 /* Subfila Columna 1: días transcurridos desde la fecha inicial alineados con cada seguimiento */
 .operational-table.report-main-table td.report-slot-cell > .elapsed-followup-slot {
   height: 100%;
-  min-height: 76px;
+  min-height: 72px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   gap: 0.22rem;
-  padding: 0.2rem 0.25rem;
+  padding: 0.2rem 0.25rem 0.2rem 0.55rem;
   border-radius: 0;
   background: transparent;
   border: none;
+  border-left: 2px solid #CBD5E1;
   box-sizing: border-box;
 }
 
 .operational-table.report-main-table td.report-slot-cell > .elapsed-followup-slot.is-resolved {
   background: transparent;
-  border: none;
+  border-left-color: #16A34A;
 }
 
 body.theme-night .operational-table.report-main-table td.report-slot-cell > .elapsed-followup-slot {
   background: transparent;
-  border: none;
+  border-left-color: #3B6998;
 }
 
 body.theme-night .operational-table.report-main-table td.report-slot-cell > .elapsed-followup-slot.is-resolved {
   background: transparent;
-  border: none;
+  border-left-color: #4ADE80;
 }
 
 .elapsed-days-badge {

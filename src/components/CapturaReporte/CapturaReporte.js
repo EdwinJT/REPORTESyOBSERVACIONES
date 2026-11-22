@@ -1701,7 +1701,13 @@ export class CapturaReporteView {
         ? 'badge-media'
         : 'badge-baja';
 
+    const spacerRowHtml =
+      repIdx > 0
+        ? `<tr class="report-block-spacer" aria-hidden="true"><td colspan="5"></td></tr>`
+        : '';
+
     const initialRowHtml = `
+      ${spacerRowHtml}
       <tr class="${initialRowClasses}" data-report-id="${this.escapeHtml(rep.id)}">
         <!-- COL 1: EQUIPO / FECHA -->
         <td class="report-slot-cell report-equip-cell">
