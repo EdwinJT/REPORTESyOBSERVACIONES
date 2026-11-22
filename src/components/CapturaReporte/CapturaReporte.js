@@ -1167,7 +1167,7 @@ export class CapturaReporteView {
         }
 
         <!-- 1. CUADRO DE CÓDIGOS DE EQUIPOS CREADOS -->
-        <section class="section-panel" aria-label="Cuadro de Códigos de Equipos Creados">
+        <section class="section-panel section-panel-equipos" aria-label="Cuadro de Códigos de Equipos Creados">
           <div class="section-header">
             <div>
               <h2 class="section-title">🚜 1. Cuadro de Códigos de Equipos Creados</h2>
@@ -1226,7 +1226,7 @@ export class CapturaReporteView {
 
         <!-- 2. PANEL DE CREACIÓN DE REPORTE ("NUEVO REPORTE") -->
         <section
-          class="section-panel ${this.isCreatePanelCollapsed ? 'is-panel-collapsed' : ''}"
+          class="section-panel section-panel-creacion ${this.isCreatePanelCollapsed ? 'is-panel-collapsed' : ''}"
           id="section-panel-creacion"
           aria-label="Panel de Creación de Reporte"
         >
@@ -1586,7 +1586,7 @@ export class CapturaReporteView {
         </section>
 
         <!-- 3. TABLA PRINCIPAL CON ORDEN DE LECTURA OPERATIVO -->
-        <section class="section-panel" id="section-tabla-principal" aria-label="Tabla Principal con Orden de Lectura Operativo">
+        <section class="section-panel section-panel-tabla" id="section-tabla-principal" aria-label="Tabla Principal con Orden de Lectura Operativo">
           <div class="section-header">
             <div>
               <h2 class="section-title">
@@ -1669,7 +1669,17 @@ export class CapturaReporteView {
                     </td>
                   </tr>
                 `
-                    : reportesVisibles.map((rep, repIdx) => this.renderTableRow(rep, repIdx)).join('')
+                    : (() => {
+                        const eqColorMap = new Map();
+                        return reportesVisibles
+                          .map((rep, repIdx) => {
+                            if (!eqColorMap.has(rep.codigo_equipo)) {
+                              eqColorMap.set(rep.codigo_equipo, eqColorMap.size % 6);
+                            }
+                            return this.renderTableRow(rep, repIdx, eqColorMap.get(rep.codigo_equipo));
+                          })
+                          .join('');
+                      })()
                 }
               </tbody>
             </table>
@@ -1688,12 +1698,13 @@ export class CapturaReporteView {
     this.attachEvents();
   }
 
-  renderTableRow(rep, repIdx = 0) {
+  renderTableRow(rep, repIdx = 0, eqColorIdx = 0) {
     const seguimientos = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
     const isReportLevantada = this.isReportLevantada(rep);
     const totalRows = 1 + seguimientos.length;
+    const eqAccentClass = `eq-accent-${eqColorIdx % 6}`;
     const groupStripeClass = repIdx % 2 === 1 ? 'report-group-even' : 'report-group-odd';
-    const initialRowClasses = `report-row-initial ${groupStripeClass}${seguimientos.length === 0 ? ' report-row-last' : ''}`;
+    const initialRowClasses = `report-row-initial ${groupStripeClass} ${eqAccentClass}${seguimientos.length === 0 ? ' report-row-last' : ''}`;
     const prioClass =
       rep.prioridad === 'Alta'
         ? 'badge-alta'
@@ -1870,7 +1881,7 @@ export class CapturaReporteView {
         <!-- COL 5: ESTADO -->
         <td rowspan="${totalRows}" class="report-span-cell">
           <div style="display:flex; flex-direction:column; gap:0.5rem;">
-            <span class="badge ${rep.sincronizado_en_nube_real ? 'badge-baja' : 'badge-pending'}">
+            <span class="badge ${rep.sincronizado_en_nube_real ? 'badge-synced' : 'badge-pending'}">
               ${rep.sincronizado_en_nube_real ? '☁️ EN NUBE' : `⏳ ${this.escapeHtml(rep.estado.toUpperCase())}`}
             </span>
             <span style="font-size:0.75rem; color:var(--text-muted);">
@@ -1893,7 +1904,7 @@ export class CapturaReporteView {
         const isResolvedSeg = this.isSegLevantada(seg);
         const slotClass = isResolvedSeg ? 'slot-followup slot-resolved' : 'slot-followup';
         const labelColor = isResolvedSeg ? '#15803d' : 'var(--accent-amber)';
-        const segRowClasses = `report-row-followup ${groupStripeClass}${isLastSeg ? ' report-row-last' : ''}`;
+        const segRowClasses = `report-row-followup ${groupStripeClass} ${eqAccentClass}${isLastSeg ? ' report-row-last' : ''}`;
         const segFotos = seg.fotos_locales || [];
 
         return `

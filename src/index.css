@@ -538,6 +538,182 @@ body.theme-night .btn-success:hover:not(:disabled) {
   border-color: #FFFFFF;
 }
 
+/* Paleta diferenciada por sección (Día y Noche) para lectura rápida en campo */
+.section-panel-equipos {
+  border-color: #2563EB;
+}
+
+.section-panel-equipos .section-header {
+  background: #DBEAFE;
+  color: #0F294A;
+  border-bottom-color: #2563EB;
+  --text-muted: #1E3A5F;
+}
+
+.section-panel-equipos .section-title {
+  color: #0F294A;
+}
+
+.section-panel-equipos .section-header .brand-subtitle {
+  color: #1E3A5F;
+}
+
+.section-panel-equipos .section-header .badge-pending {
+  background: #0F294A;
+  color: #FFFFFF;
+  border-color: #0F294A;
+}
+
+body.theme-night .section-panel-equipos {
+  border-color: #3B82F6;
+}
+
+body.theme-night .section-panel-equipos .section-header {
+  background: #0C2340;
+  color: #DBEAFE;
+  border-bottom-color: #3B82F6;
+}
+
+body.theme-night .section-panel-equipos .section-title {
+  color: #E0F2FE;
+}
+
+body.theme-night .section-panel-equipos .section-header .brand-subtitle {
+  color: #BAE6FD;
+}
+
+body.theme-night .section-panel-equipos .section-header .badge-pending {
+  background: #1D4ED8;
+  color: #FFFFFF;
+  border-color: #60A5FA;
+}
+
+.section-panel-creacion {
+  border-color: #EA580C;
+}
+
+.section-panel-creacion .section-header {
+  background: #FFEDD5;
+  color: #431407;
+  border-bottom-color: #EA580C;
+  --text-muted: #7C2D12;
+}
+
+.section-panel-creacion .section-title {
+  color: #431407;
+}
+
+.section-panel-creacion .btn-mine.btn-panel-toggle {
+  background: #FFFFFF;
+  color: #0F294A;
+  border-color: #EA580C;
+}
+
+.section-panel-creacion .btn-mine.btn-panel-toggle:hover:not(:disabled) {
+  background: #FFF7ED;
+  color: #431407;
+  border-color: #C2410C;
+}
+
+.section-panel-creacion .btn-mine.btn-panel-toggle.is-collapsed {
+  background: #EA580C;
+  color: #FFFFFF;
+  border-color: #9A3412;
+}
+
+.section-panel-creacion .btn-mine.btn-panel-toggle.is-collapsed:hover:not(:disabled) {
+  background: #C2410C;
+  color: #FFFFFF;
+  border-color: #7C2D12;
+}
+
+body.theme-night .section-panel-creacion {
+  border-color: #F97316;
+}
+
+body.theme-night .section-panel-creacion .section-header {
+  background: #3B1806;
+  color: #FFEDD5;
+  border-bottom-color: #F97316;
+}
+
+body.theme-night .section-panel-creacion .section-title {
+  color: #FFEDD5;
+}
+
+body.theme-night .section-panel-creacion .btn-mine.btn-panel-toggle {
+  background: #1C0D05;
+  color: #FFEDD5;
+  border-color: #FB923C;
+}
+
+body.theme-night .section-panel-creacion .btn-mine.btn-panel-toggle:hover:not(:disabled) {
+  background: #2C1408;
+  color: #FFFFFF;
+  border-color: #FED7AA;
+}
+
+body.theme-night .section-panel-creacion .btn-mine.btn-panel-toggle.is-collapsed {
+  background: #EA580C;
+  color: #FFFFFF;
+  border-color: #FED7AA;
+}
+
+.section-panel-tabla {
+  border-color: #16A34A;
+}
+
+.section-panel-tabla .section-header {
+  background: #DCFCE7;
+  color: #052E16;
+  border-bottom-color: #16A34A;
+  --text-muted: #14532D;
+}
+
+.section-panel-tabla .section-title {
+  color: #052E16;
+}
+
+.section-panel-tabla .section-header .brand-subtitle {
+  color: #14532D;
+}
+
+.section-panel-tabla .section-header .btn-secondary {
+  background: #FFFFFF;
+  color: #052E16;
+  border-color: #16A34A;
+}
+
+.section-panel-tabla .section-header .btn-secondary:hover:not(:disabled) {
+  background: #BBF7D0;
+  color: #052E16;
+  border-color: #14532D;
+}
+
+body.theme-night .section-panel-tabla {
+  border-color: #22C55E;
+}
+
+body.theme-night .section-panel-tabla .section-header {
+  background: #062E1B;
+  color: #DCFCE7;
+  border-bottom-color: #22C55E;
+}
+
+body.theme-night .section-panel-tabla .section-title {
+  color: #DCFCE7;
+}
+
+body.theme-night .section-panel-tabla .section-header .brand-subtitle {
+  color: #BBF7D0;
+}
+
+body.theme-night .section-panel-tabla .section-header .btn-secondary {
+  background: #052E16;
+  color: #DCFCE7;
+  border-color: #4ADE80;
+}
+
 /* 1. Cuadro de Códigos de Equipos Creados */
 .equipment-chips-grid {
   display: grid;
@@ -1041,10 +1217,10 @@ body.theme-night .slot-initial {
   min-height: 102px;
   padding: 0.62rem 0.75rem;
   border-radius: 8px;
-  background: #FFF2E5;
+  background: #FFF7ED;
   color: #3B1404;
-  border: 2px solid #E85D04;
-  border-left: 6px solid var(--stracon-orange-dark);
+  border: 2px solid #F97316;
+  border-left: 6px solid #EA580C;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
@@ -1130,6 +1306,35 @@ body.theme-night .operational-table.report-main-table tbody tr.report-group-even
 .operational-table.report-main-table td.report-slot-cell > .slot-followup {
   height: 100%;
   box-sizing: border-box;
+}
+
+/* Acentos diferenciados por equipo en Tabla Principal */
+tr.eq-accent-0 { --eq-accent: #0284C7; --eq-accent-hover: #0369A1; }
+tr.eq-accent-1 { --eq-accent: #7C3AED; --eq-accent-hover: #6D28D9; }
+tr.eq-accent-2 { --eq-accent: #D97706; --eq-accent-hover: #B45309; }
+tr.eq-accent-3 { --eq-accent: #0D9488; --eq-accent-hover: #0F766E; }
+tr.eq-accent-4 { --eq-accent: #BE123C; --eq-accent-hover: #9F1239; }
+tr.eq-accent-5 { --eq-accent: #4338CA; --eq-accent-hover: #3730A3; }
+
+.operational-table.report-main-table tbody tr[class*="eq-accent-"] td.report-equip-cell,
+.operational-table.report-main-table tbody tr[class*="eq-accent-"] td.report-elapsed-cell {
+  border-left: 5px solid var(--eq-accent);
+}
+
+.operational-table.report-main-table tbody tr[class*="eq-accent-"] td.report-equip-cell button[data-filter-code] {
+  background: var(--eq-accent);
+  border-color: var(--eq-accent);
+  color: #FFFFFF;
+}
+
+.operational-table.report-main-table tbody tr[class*="eq-accent-"] td.report-equip-cell button[data-filter-code]:hover:not(:disabled) {
+  background: var(--eq-accent-hover);
+  border-color: var(--eq-accent-hover);
+  color: #FFFFFF;
+}
+
+.operational-table.report-main-table tbody tr[class*="eq-accent-"] .slot-initial {
+  border-left-color: var(--eq-accent);
 }
 
 .slot-preview-top {
@@ -1279,39 +1484,51 @@ body.theme-night .draw-color-swatch.active {
 }
 
 .badge-alta {
-  background: #FEE2E2;
-  color: #7F1D1D;
-  border: 2px solid #DC2626;
+  background: #B91C1C;
+  color: #FFFFFF;
+  border: 2px solid #991B1B;
 }
 
 body.theme-night .badge-alta {
-  background: #450A0A;
-  color: #FECACA;
+  background: #991B1B;
+  color: #FEE2E2;
   border-color: #F87171;
 }
 
 .badge-media {
-  background: #FFEDD5;
-  color: #7C2D12;
-  border: 2px solid #EA580C;
+  background: #D97706;
+  color: #FFFFFF;
+  border: 2px solid #B45309;
 }
 
 body.theme-night .badge-media {
-  background: #431407;
-  color: #FED7AA;
-  border-color: #FB923C;
+  background: #92400E;
+  color: #FEF3C7;
+  border-color: #FBBF24;
 }
 
 .badge-baja {
-  background: #E6F0FA;
-  color: #002B5C;
-  border: 2px solid var(--stracon-blue);
+  background: #0369A1;
+  color: #FFFFFF;
+  border: 2px solid #075985;
 }
 
 body.theme-night .badge-baja {
-  background: #0F2D52;
-  color: #BAE6FD;
-  border-color: #60A5FA;
+  background: #0C4A6E;
+  color: #E0F2FE;
+  border-color: #38BDF8;
+}
+
+.badge-synced {
+  background: #15803D;
+  color: #FFFFFF;
+  border: 2px solid #166534;
+}
+
+body.theme-night .badge-synced {
+  background: #065F46;
+  color: #ECFDF5;
+  border-color: #4ADE80;
 }
 
 .badge-pending {
@@ -3016,28 +3233,80 @@ body.view-mode-operativo .module-navbar {
   color: #052E16;
 }
 
-body.theme-night .table-status-tab-btn {
+.section-panel-tabla .table-status-tab-btn {
+  background: #FFFFFF;
+  color: #0F294A;
+  border-color: #86EFAC;
+}
+
+.section-panel-tabla .table-status-tab-btn:hover {
+  border-color: #16A34A;
+  background: #F0FDF4;
+  color: #052E16;
+}
+
+.section-panel-tabla .table-status-tab-btn.active {
+  background: #15803D;
+  color: #FFFFFF;
+  border-color: #14532D;
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.25);
+}
+
+.section-panel-tabla .table-status-tab-btn.active .chip-count {
+  background: #FFFFFF;
+  color: #14532D;
+}
+
+.section-panel-tabla .table-status-tab-btn.tab-levantadas.active {
+  background: #0F766E;
+  color: #FFFFFF;
+  border-color: #115E59;
+  box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.25);
+}
+
+.section-panel-tabla .table-status-tab-btn.tab-levantadas.active .chip-count {
+  background: #FFFFFF;
+  color: #115E59;
+}
+
+body.theme-night .table-status-tab-btn,
+body.theme-night .section-panel-tabla .table-status-tab-btn {
   background: #13263B;
   color: #F8FAFC;
   border-color: #4B79A8;
 }
 
-body.theme-night .table-status-tab-btn:hover {
+body.theme-night .table-status-tab-btn:hover,
+body.theme-night .section-panel-tabla .table-status-tab-btn:hover {
   background: #1B3654;
   border-color: var(--stracon-orange-bright);
   color: #FFFFFF;
 }
 
-body.theme-night .table-status-tab-btn.active {
-  background: var(--stracon-navy-mid);
-  color: #FFFFFF;
-  border-color: var(--stracon-orange-bright);
-}
-
-body.theme-night .table-status-tab-btn.tab-levantadas.active {
-  background: #064E3B;
+body.theme-night .table-status-tab-btn.active,
+body.theme-night .section-panel-tabla .table-status-tab-btn.active {
+  background: #065F46;
   color: #ECFDF5;
   border-color: #4ADE80;
+}
+
+body.theme-night .table-status-tab-btn.active .chip-count,
+body.theme-night .section-panel-tabla .table-status-tab-btn.active .chip-count {
+  background: #4ADE80;
+  color: #052E16;
+}
+
+body.theme-night .table-status-tab-btn.tab-levantadas.active,
+body.theme-night .section-panel-tabla .table-status-tab-btn.tab-levantadas.active {
+  background: #115E59;
+  color: #ECFDF5;
+  border-color: #2DD4BF;
+}
+
+body.theme-night .table-status-tab-btn.tab-levantadas.active .chip-count,
+body.theme-night .section-panel-tabla .table-status-tab-btn.tab-levantadas.active .chip-count {
+  background: #5EEAD4;
+  color: #042F2E;
 }
 
 .reopen-observation-box {
