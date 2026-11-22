@@ -33,6 +33,8 @@ import { authService } from '../../services/authService.js';
 import { pwaManager } from '../../services/pwaManager.js';
 import { syncQueue } from '../../services/syncQueue.js';
 
+const CREATE_PANEL_COLLAPSED_KEY = 'mineria_create_panel_collapsed_v1';
+
 export class CapturaReporteView {
   constructor(rootEl, { onStatsChange, initialTableTab = 'activas', onTableTabChange } = {}) {
     this.rootEl = rootEl;
@@ -47,6 +49,14 @@ export class CapturaReporteView {
     // Filtro activo en Cuadro de Equipos ("TODOS" o código específico)
     this.filtroEquipo = 'TODOS';
     this.vistaTabla = initialTableTab === 'levantadas' ? 'levantadas' : 'activas';
+
+    // Estado minimizado/expandido del Panel 2 ("Nuevo Reporte")
+    this.isCreatePanelCollapsed = false;
+    try {
+      this.isCreatePanelCollapsed = localStorage.getItem(CREATE_PANEL_COLLAPSED_KEY) === '1';
+    } catch {
+      this.isCreatePanelCollapsed = false;
+    }
 
     // Estado del formulario "Nuevo Reporte"
     this.form = {
@@ -1215,13 +1225,28 @@ export class CapturaReporteView {
         </section>
 
         <!-- 2. PANEL DE CREACIÓN DE REPORTE ("NUEVO REPORTE") -->
-        <section class="section-panel" aria-label="Panel de Creación de Reporte">
+        <section
+          class="section-panel ${this.isCreatePanelCollapsed ? 'is-panel-collapsed' : ''}"
+          id="section-panel-creacion"
+          aria-label="Panel de Creación de Reporte"
+        >
           <div class="section-header">
             <div>
               <h2 class="section-title">📝 2. Panel de Creación de Reporte ("Nuevo Reporte")</h2>
             </div>
+            <button
+              type="button"
+              class="btn-mine btn-sm-mine btn-panel-toggle ${this.isCreatePanelCollapsed ? 'is-collapsed' : ''}"
+              id="btn-toggle-create-panel"
+              aria-expanded="${!this.isCreatePanelCollapsed}"
+              aria-controls="create-panel-body"
+              title="${this.isCreatePanelCollapsed ? 'Mostrar el formulario para registrar un nuevo reporte' : 'Ocultar el formulario para ver los códigos y la tabla principal más cerca'}"
+            >
+              ${this.isCreatePanelCollapsed ? '🔽 Mostrar formulario' : '🔼 Ocultar formulario'}
+            </button>
           </div>
 
+          <div class="create-panel-body" id="create-panel-body">
           <div class="form-grid">
             <!-- Tarjeta 1: Código de Equipo + Crear Nuevo -->
             <div class="field-group">
@@ -1556,6 +1581,7 @@ export class CapturaReporteView {
             <button type="button" class="btn-mine btn-primary" id="btn-guardar-reporte" style="min-width: 260px; font-size: 1.05rem;">
               💾 Guardar Reporte en Dispositivo
             </button>
+          </div>
           </div>
         </section>
 
@@ -2917,6 +2943,23 @@ export class CapturaReporteView {
     if (btnCloseBanner) {
       btnCloseBanner.addEventListener('click', () => {
         this.banner = null;
+        this.render();
+      });
+    }
+
+    // Ocultar / mostrar el Panel 2 ("Nuevo Reporte")
+    const btnToggleCreatePanel = this.rootEl.querySelector('#btn-toggle-create-panel');
+    if (btnToggleCreatePanel) {
+      btnToggleCreatePanel.addEventListener('click', () => {
+        this.isCreatePanelCollapsed = !this.isCreatePanelCollapsed;
+        try {
+          localStorage.setItem(
+            CREATE_PANEL_COLLAPSED_KEY,
+            this.isCreatePanelCollapsed ? '1' : '0'
+          );
+        } catch {
+          // Ignorar restricciones de storage
+        }
         this.render();
       });
     }

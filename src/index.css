@@ -496,6 +496,48 @@ body.theme-night .btn-success:hover:not(:disabled) {
   gap: 0.45rem;
 }
 
+.section-panel.is-panel-collapsed {
+  padding-bottom: 0;
+}
+
+.section-panel.is-panel-collapsed .section-header {
+  margin-bottom: 0;
+  border-radius: 9px;
+}
+
+.section-panel.is-panel-collapsed .create-panel-body {
+  display: none;
+}
+
+.btn-mine.btn-panel-toggle {
+  background: #0A2242;
+  color: #FFFFFF;
+  border-color: var(--stracon-orange-bright);
+  font-weight: 900;
+  white-space: nowrap;
+  min-height: 36px;
+  padding: 0.28rem 0.78rem;
+  font-size: 0.88rem;
+}
+
+.btn-mine.btn-panel-toggle:hover:not(:disabled) {
+  background: #133663;
+  color: #FFFFFF;
+  border-color: #FFFFFF;
+}
+
+.btn-mine.btn-panel-toggle.is-collapsed {
+  background: var(--stracon-orange);
+  color: #FFFFFF;
+  border-color: #FFFFFF;
+}
+
+.btn-mine.btn-panel-toggle.is-collapsed:hover:not(:disabled) {
+  background: var(--stracon-orange-bright);
+  color: #FFFFFF;
+  border-color: #FFFFFF;
+}
+
 /* 1. Cuadro de Códigos de Equipos Creados */
 .equipment-chips-grid {
   display: grid;
@@ -2734,6 +2776,7 @@ body.theme-night .m6-origin-pill.local-only {
 
   .btn-mine.btn-topbar-sync,
   .btn-mine.btn-topbar-toggle,
+  .btn-mine.btn-panel-toggle,
   .topbar-quick-status {
     min-height: 34px;
     padding: 0.22rem 0.52rem;
@@ -2753,9 +2796,17 @@ body.theme-night .m6-origin-pill.local-only {
     padding: 0.7rem 0.7rem;
   }
 
+  .section-panel.is-panel-collapsed {
+    padding-bottom: 0;
+  }
+
   .section-header {
     margin: -0.7rem -0.7rem 0.75rem -0.7rem;
     padding: 0.6rem 0.75rem;
+  }
+
+  .section-panel.is-panel-collapsed .section-header {
+    margin-bottom: 0;
   }
 
   .section-title {
