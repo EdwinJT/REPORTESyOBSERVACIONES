@@ -343,9 +343,9 @@ export class CapturaReporteView {
         { numeric: true, sensitivity: 'base' }
       );
       if (codeCmp !== 0) return codeCmp;
-      const dateCmp = String(b.fecha || '').localeCompare(String(a.fecha || ''));
+      const dateCmp = String(a.fecha || '').localeCompare(String(b.fecha || ''));
       if (dateCmp !== 0) return dateCmp;
-      return String(b.creado_en || '').localeCompare(String(a.creado_en || ''));
+      return String(a.creado_en || '').localeCompare(String(b.creado_en || ''));
     });
     const storageEst = await getStorageUsageEstimate();
     const pendientes = rawLocal.filter((r) => r.estado === 'pendiente' || r.estado === 'error').length;
