@@ -2334,8 +2334,14 @@ export class CapturaReporteView {
       drawColor = '#EF4444',
       drawSize = 5,
       isSavingEdit = false,
-      editError = null
+      editError = null,
+      zoom = 1,
+      panX = 0,
+      panY = 0
     } = this.viewerModal;
+    const safeZoom = Math.min(4, Math.max(1, Number(zoom) || 1));
+    const safePanX = safeZoom > 1 ? Number(panX) || 0 : 0;
+    const safePanY = safeZoom > 1 ? Number(panY) || 0 : 0;
     const url = this.getPhotoDisplayUrl({ blob, signedUrl });
     const colors = ['#EF4444', '#FACC15', '#F26522', '#38BDF8', '#FFFFFF'];
 
@@ -2345,6 +2351,23 @@ export class CapturaReporteView {
           <div class="section-header">
             <h3 class="section-title">🔍 ${this.escapeHtml(title)}</h3>
             <div style="display:flex; gap:0.5rem; align-items:center; flex-wrap:wrap;">
+              ${
+                !isVideo && url && !isEditing
+                  ? `
+                    <div class="viewer-zoom-controls" role="group" aria-label="Controles de zoom">
+                      <button type="button" class="btn-mine btn-sm-mine viewer-zoom-btn" id="btn-viewer-zoom-out" title="Alejar" aria-label="Alejar foto" ${safeZoom <= 1 ? 'disabled' : ''}>
+                        −
+                      </button>
+                      <button type="button" class="btn-mine btn-sm-mine viewer-zoom-readout" id="btn-viewer-zoom-reset" title="Restablecer zoom a 100%">
+                        🔍 ${Math.round(safeZoom * 100)}%
+                      </button>
+                      <button type="button" class="btn-mine btn-sm-mine viewer-zoom-btn" id="btn-viewer-zoom-in" title="Acercar" aria-label="Acercar foto" ${safeZoom >= 4 ? 'disabled' : ''}>
+                        +
+                      </button>
+                    </div>
+                  `
+                  : ''
+              }
               ${
                 !isVideo && url
                   ? isEditing
@@ -2427,12 +2450,16 @@ export class CapturaReporteView {
               : ''
           }
 
-          <div class="photo-editor-viewer-box">
+          <div class="photo-editor-viewer-box${!isVideo && !isEditing && safeZoom > 1 ? ' is-zoomed' : ''}" id="photo-editor-viewer-box">
             ${
               isVideo
                 ? `<video src="${url}" controls autoplay style="max-width:100%; max-height:66vh; border-radius:6px;"></video>`
                 : `
-                  <div class="photo-editor-stage" id="photo-editor-stage">
+                  <div class="photo-editor-stage" id="photo-editor-stage"${
+                    !isEditing && (safeZoom > 1 || safePanX !== 0 || safePanY !== 0)
+                      ? ` style="transform: translate(${safePanX}px, ${safePanY}px) scale(${safeZoom});"`
+                      : ''
+                  }>
                     <img id="viewer-base-img" src="${url}" alt="Inspección de placa" />
                     ${
                       isEditing
@@ -2448,7 +2475,7 @@ export class CapturaReporteView {
             <span>${
               isEditing
                 ? 'Dibuja directamente sobre la foto con el dedo o el mouse (Lápiz y Borrador solo afectan tus trazos).'
-                : 'Verificación de legibilidad de placa / serie (Escenario P3)'
+                : 'Usa + / −, rueda del mouse o doble clic para hacer zoom (arrastra para mover).'
             }</span>
           </div>
         </div>
@@ -3194,6 +3221,9 @@ export class CapturaReporteView {
           filename: `${this.form.codigo_equipo || 'equipo'}_preview_${idx + 1}.jpg`,
           isVideo: false,
           isEditing: false,
+          zoom: 1,
+          panX: 0,
+          panY: 0,
           drawTool: 'pencil',
           drawColor: '#EF4444',
           drawSize: 5,
@@ -3342,6 +3372,9 @@ export class CapturaReporteView {
           }_foto_${fIdx + 1}.jpg`,
           isVideo: false,
           isEditing: false,
+          zoom: 1,
+          panX: 0,
+          panY: 0,
           drawTool: 'pencil',
           drawColor: '#EF4444',
           drawSize: 5,
@@ -3680,6 +3713,9 @@ export class CapturaReporteView {
 
     this.rootEl.querySelector('#btn-toggle-viewer-edit')?.addEventListener('click', () => {
       if (!this.viewerModal || this.viewerModal.isVideo) return;
+      this.viewerModal.zoom = 1;
+      this.viewerModal.panX = 0;
+      this.viewerModal.panY = 0;
       this.viewerModal.isEditing = true;
       this.viewerModal.editError = null;
       this.render();
@@ -3696,6 +3732,183 @@ export class CapturaReporteView {
     this.rootEl.querySelector('#btn-save-viewer-edit')?.addEventListener('click', () => {
       this.handleSaveEditedViewerPhoto();
     });
+
+    if (this.viewerModal && !this.viewerModal.isVideo && !this.viewerModal.isEditing) {
+      const viewerBox = this.rootEl.querySelector('#photo-editor-viewer-box');
+      const viewerStage = this.rootEl.querySelector('#photo-editor-stage');
+      const btnZoomIn = this.rootEl.querySelector('#btn-viewer-zoom-in');
+      const btnZoomOut = this.rootEl.querySelector('#btn-viewer-zoom-out');
+      const btnZoomReset = this.rootEl.querySelector('#btn-viewer-zoom-reset');
+
+      const clampViewerPan = (px, py, z) => {
+        if (z <= 1 || !viewerStage) return { x: 0, y: 0 };
+        const maxX = Math.max(0, ((z - 1) * viewerStage.offsetWidth) / 2);
+        const maxY = Math.max(0, ((z - 1) * viewerStage.offsetHeight) / 2);
+        return {
+          x: Math.max(-maxX, Math.min(maxX, px)),
+          y: Math.max(-maxY, Math.min(maxY, py))
+        };
+      };
+
+      const applyViewerTransform = () => {
+        if (!this.viewerModal || !viewerStage || !viewerBox) return;
+        const z = Math.min(4, Math.max(1, Number(this.viewerModal.zoom) || 1));
+        this.viewerModal.zoom = z;
+        const clamped = clampViewerPan(
+          Number(this.viewerModal.panX) || 0,
+          Number(this.viewerModal.panY) || 0,
+          z
+        );
+        this.viewerModal.panX = clamped.x;
+        this.viewerModal.panY = clamped.y;
+
+        viewerStage.style.transform =
+          z > 1
+            ? `translate(${clamped.x}px, ${clamped.y}px) scale(${z})`
+            : 'translate(0px, 0px) scale(1)';
+        viewerBox.classList.toggle('is-zoomed', z > 1);
+        if (btnZoomReset) btnZoomReset.textContent = `🔍 ${Math.round(z * 100)}%`;
+        if (btnZoomOut) btnZoomOut.disabled = z <= 1;
+        if (btnZoomIn) btnZoomIn.disabled = z >= 4;
+      };
+
+      const setViewerZoom = (nextZoom, resetPanOn1x = true) => {
+        if (!this.viewerModal) return;
+        const clampedZ = Math.round(Math.min(4, Math.max(1, nextZoom)) * 100) / 100;
+        const prevZ = Number(this.viewerModal.zoom) || 1;
+        this.viewerModal.zoom = clampedZ;
+        if (clampedZ <= 1 && resetPanOn1x) {
+          this.viewerModal.panX = 0;
+          this.viewerModal.panY = 0;
+        } else if (prevZ > 0 && clampedZ !== prevZ) {
+          const factor = (clampedZ - 1) / Math.max(0.01, prevZ - 1 || 1);
+          if (prevZ > 1) {
+            this.viewerModal.panX = (Number(this.viewerModal.panX) || 0) * factor;
+            this.viewerModal.panY = (Number(this.viewerModal.panY) || 0) * factor;
+          }
+        }
+        applyViewerTransform();
+      };
+
+      btnZoomIn?.addEventListener('click', () => {
+        setViewerZoom((Number(this.viewerModal?.zoom) || 1) + 0.5);
+      });
+
+      btnZoomOut?.addEventListener('click', () => {
+        setViewerZoom((Number(this.viewerModal?.zoom) || 1) - 0.5);
+      });
+
+      btnZoomReset?.addEventListener('click', () => {
+        if (!this.viewerModal) return;
+        this.viewerModal.panX = 0;
+        this.viewerModal.panY = 0;
+        setViewerZoom(1);
+      });
+
+      viewerBox?.addEventListener('dblclick', (e) => {
+        e.preventDefault();
+        const current = Number(this.viewerModal?.zoom) || 1;
+        if (current > 1) {
+          if (this.viewerModal) {
+            this.viewerModal.panX = 0;
+            this.viewerModal.panY = 0;
+          }
+          setViewerZoom(1);
+        } else {
+          setViewerZoom(2);
+        }
+      });
+
+      viewerBox?.addEventListener(
+        'wheel',
+        (e) => {
+          e.preventDefault();
+          const delta = e.deltaY < 0 ? 0.25 : -0.25;
+          setViewerZoom((Number(this.viewerModal?.zoom) || 1) + delta);
+        },
+        { passive: false }
+      );
+
+      let isPanning = false;
+      let panPointerId = null;
+      let startX = 0;
+      let startY = 0;
+      let originPanX = 0;
+      let originPanY = 0;
+      let pinchStartDist = 0;
+      let pinchStartZoom = 1;
+
+      const getTouchDist = (t1, t2) =>
+        Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+
+      viewerBox?.addEventListener('pointerdown', (e) => {
+        if (!this.viewerModal || (Number(this.viewerModal.zoom) || 1) <= 1) return;
+        if (pinchStartDist > 0 || e.button > 0) return;
+        isPanning = true;
+        panPointerId = e.pointerId;
+        startX = e.clientX;
+        startY = e.clientY;
+        originPanX = Number(this.viewerModal.panX) || 0;
+        originPanY = Number(this.viewerModal.panY) || 0;
+        viewerBox.classList.add('is-panning');
+        try {
+          viewerBox.setPointerCapture(e.pointerId);
+        } catch {
+          // ignore
+        }
+      });
+
+      viewerBox?.addEventListener('pointermove', (e) => {
+        if (!isPanning || e.pointerId !== panPointerId || !this.viewerModal) return;
+        this.viewerModal.panX = originPanX + (e.clientX - startX);
+        this.viewerModal.panY = originPanY + (e.clientY - startY);
+        applyViewerTransform();
+      });
+
+      const stopPanning = (e) => {
+        if (!isPanning || (e?.pointerId !== undefined && e.pointerId !== panPointerId)) return;
+        isPanning = false;
+        panPointerId = null;
+        viewerBox?.classList.remove('is-panning');
+      };
+
+      viewerBox?.addEventListener('pointerup', stopPanning);
+      viewerBox?.addEventListener('pointercancel', stopPanning);
+
+      viewerBox?.addEventListener(
+        'touchstart',
+        (e) => {
+          if (e.touches.length === 2) {
+            isPanning = false;
+            panPointerId = null;
+            viewerBox.classList.remove('is-panning');
+            pinchStartDist = getTouchDist(e.touches[0], e.touches[1]);
+            pinchStartZoom = Number(this.viewerModal?.zoom) || 1;
+          }
+        },
+        { passive: true }
+      );
+
+      viewerBox?.addEventListener(
+        'touchmove',
+        (e) => {
+          if (e.touches.length === 2 && pinchStartDist > 0) {
+            e.preventDefault();
+            const ratio = getTouchDist(e.touches[0], e.touches[1]) / pinchStartDist;
+            setViewerZoom(pinchStartZoom * ratio);
+          } else if (e.touches.length === 1 && (Number(this.viewerModal?.zoom) || 1) > 1) {
+            e.preventDefault();
+          }
+        },
+        { passive: false }
+      );
+
+      viewerBox?.addEventListener('touchend', (e) => {
+        if (e.touches.length < 2) {
+          pinchStartDist = 0;
+        }
+      });
+    }
 
     const btnToolPencil = this.rootEl.querySelector('#btn-tool-pencil');
     const btnToolEraser = this.rootEl.querySelector('#btn-tool-eraser');
