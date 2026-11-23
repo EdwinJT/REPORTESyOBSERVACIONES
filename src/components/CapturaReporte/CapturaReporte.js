@@ -1768,11 +1768,6 @@ export class CapturaReporteView {
             <span style="font-size:0.75rem; color:var(--text-muted);">
               ID: ${this.escapeHtml(rep.id.slice(0, 8))}
             </span>
-            ${
-              rep.es_nuevo_codigo
-                ? `<span class="badge badge-baja">Código nuevo</span>`
-                : ''
-            }
           </div>
         </td>
 
