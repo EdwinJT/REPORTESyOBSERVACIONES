@@ -123,6 +123,7 @@ export class HistorialModuleView {
 
     this.banner = null;
     this.objectUrls = [];
+    this.detailObjectUrls = [];
     this.thumbUrlMap = new Map();
 
     this.unsubAuth = null;
@@ -162,6 +163,7 @@ export class HistorialModuleView {
   }
 
   revokeObjectUrls() {
+    this.revokeDetailObjectUrls();
     for (const url of this.objectUrls) {
       try {
         URL.revokeObjectURL(url);
@@ -170,6 +172,18 @@ export class HistorialModuleView {
       }
     }
     this.objectUrls = [];
+    this.thumbUrlMap.clear();
+  }
+
+  revokeDetailObjectUrls() {
+    for (const url of this.detailObjectUrls) {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        // ignore
+      }
+    }
+    this.detailObjectUrls = [];
   }
 
   setBanner(type, text) {
@@ -417,7 +431,7 @@ export class HistorialModuleView {
     const rep = this.unifiedReports.find((r) => r.id === reportId);
     if (!rep) return;
 
-    this.revokeObjectUrls();
+    this.revokeDetailObjectUrls();
     this.selectedDetailReport = rep;
     this.isLoadingDetailMedia = true;
     this.detailSignedMedia = null;
@@ -437,54 +451,65 @@ export class HistorialModuleView {
     const fotosLocales = Array.isArray(rep.fotos_locales) ? rep.fotos_locales : [];
     const totalCount = Math.max(photoPaths.length, fotosLocales.length, 1);
 
-    const signedPhotos = [];
     let generatedUrlsCount = 0;
 
-    for (let i = 0; i < totalCount; i++) {
-      const localItem = fotosLocales[i] || null;
-      const storagePath =
-        photoPaths[i] ||
-        localItem?.ruta_remota ||
-        `${rep.creado_por || 'user_local'}/${rep.id}/${i + 1}.jpg`;
+    const signedPhotos = await Promise.all(
+      Array.from({ length: totalCount }, async (_, i) => {
+        const localItem = fotosLocales[i] || null;
+        const storagePath =
+          photoPaths[i] ||
+          localItem?.ruta_remota ||
+          `${rep.creado_por || 'user_local'}/${rep.id}/${i + 1}.jpg`;
 
-      // Invocar supabase.storage.from('fotos').createSignedUrl(storagePath, 3600) bajo demanda
-      const signedRes = await supabase.storage.from('fotos').createSignedUrl(storagePath, 3600);
-      const signedUrl =
-        signedRes?.data?.signedUrl ||
-        `https://supabase.co/storage/v1/object/sign/fotos/${storagePath}?token=lazy_signed_${Date.now()}`;
-      generatedUrlsCount++;
+        // Invocar supabase.storage.from('fotos').createSignedUrl(storagePath, 3600) bajo demanda
+        const signedRes = await supabase.storage.from('fotos').createSignedUrl(storagePath, 3600);
+        const rawSignedUrl = signedRes?.data?.signedUrl || '';
+        const signedUrl =
+          rawSignedUrl ||
+          `https://supabase.co/storage/v1/object/sign/fotos/${storagePath}?token=lazy_signed_${Date.now()}`;
+        generatedUrlsCount++;
 
-      let previewSrc = '';
-      if (localItem?.blob) {
-        previewSrc = URL.createObjectURL(localItem.blob);
-        this.objectUrls.push(previewSrc);
-      } else {
-        previewSrc = buildCloudPhotoPreviewDataUri({
-          codigoEquipo: rep.codigo_equipo,
-          fecha: rep.fecha,
-          hora: rep.hora_peru,
-          photoNumber: i + 1,
-          totalPhotos: totalCount,
+        const isRealHttpUrl =
+          /^https?:\/\//i.test(rawSignedUrl) &&
+          !rawSignedUrl.includes('/object/public/') &&
+          !rawSignedUrl.includes('lazy_signed_');
+
+        let previewSrc = '';
+        if (localItem?.blob) {
+          previewSrc = URL.createObjectURL(localItem.blob);
+          this.detailObjectUrls.push(previewSrc);
+        } else if (isRealHttpUrl && pwaManager.getState().isOnline) {
+          previewSrc = rawSignedUrl;
+        } else {
+          previewSrc = buildCloudPhotoPreviewDataUri({
+            codigoEquipo: rep.codigo_equipo,
+            fecha: rep.fecha,
+            hora: rep.hora_peru,
+            photoNumber: i + 1,
+            totalPhotos: totalCount,
+            storagePath,
+            calidad: rep.calidad_compresion
+          });
+        }
+
+        return {
+          index: i + 1,
           storagePath,
-          calidad: rep.calidad_compresion
-        });
-      }
-
-      signedPhotos.push({
-        index: i + 1,
-        storagePath,
-        signedUrl,
-        expiresInSeconds: 3600,
-        previewSrc,
-        sizeBytes:
-          localItem?.peso_bytes ||
-          localItem?.blob?.size ||
-          (rep.calidad_compresion === 'alta' ? 312400 : 184200),
-        width: localItem?.ancho || (rep.calidad_compresion === 'alta' ? 2048 : 1600),
-        height: localItem?.alto || (rep.calidad_compresion === 'alta' ? 1536 : 1200),
-        originMode: localItem?.blob ? 'Blob Local + Ruta Firmada Nube' : 'Descarga Diferida Supabase Storage (createSignedUrl)'
-      });
-    }
+          signedUrl,
+          expiresInSeconds: 3600,
+          previewSrc,
+          sizeBytes:
+            localItem?.peso_bytes ||
+            localItem?.blob?.size ||
+            (rep.calidad_compresion === 'alta' ? 312400 : 184200),
+          width: localItem?.ancho || (rep.calidad_compresion === 'alta' ? 2048 : 1600),
+          height: localItem?.alto || (rep.calidad_compresion === 'alta' ? 1536 : 1200),
+          originMode: localItem?.blob
+            ? 'Blob Local + Ruta Firmada Nube'
+            : 'Descarga Diferida Supabase Storage (createSignedUrl)'
+        };
+      })
+    );
 
     // Video opcional bajo demanda si existe
     let signedVideo = null;
@@ -496,7 +521,7 @@ export class HistorialModuleView {
       let localVideoUrl = null;
       if (rep.video_local?.blob) {
         localVideoUrl = URL.createObjectURL(rep.video_local.blob);
-        this.objectUrls.push(localVideoUrl);
+        this.detailObjectUrls.push(localVideoUrl);
       }
       signedVideo = {
         storagePath: effectiveVidPath,
@@ -518,7 +543,7 @@ export class HistorialModuleView {
   }
 
   handleCloseDetailModal() {
-    this.revokeObjectUrls();
+    this.revokeDetailObjectUrls();
     this.selectedDetailReport = null;
     this.detailSignedMedia = null;
     this.isLoadingDetailMedia = false;
@@ -741,9 +766,12 @@ export class HistorialModuleView {
     if (storagePath && pwaManager.getState().isOnline) {
       try {
         const signed = await supabase.storage.from('fotos').createSignedUrl(storagePath, 3600);
-        if (signed?.data?.signedUrl) {
-          this.thumbUrlMap.set(rep.id, signed.data.signedUrl);
-          return signed.data.signedUrl;
+        const signedUrl = signed?.data?.signedUrl || '';
+        const isUsableSignedUrl =
+          /^https?:\/\//i.test(signedUrl) && !signedUrl.includes('/object/public/');
+        if (isUsableSignedUrl) {
+          this.thumbUrlMap.set(rep.id, signedUrl);
+          return signedUrl;
         }
       } catch {
         // Usar vista previa SVG si falla la firma
@@ -1841,11 +1869,12 @@ export class HistorialModuleView {
           <div class="m6-modal-header">
             <div>
               <div style="display:flex; align-items:center; gap:0.55rem; flex-wrap:wrap;">
-                <span class="equipo-tag" style="font-size:1.05rem;">${rep.codigo_equipo}</span>
-                <span style="color:#fbbf24; font-weight:900;">Detalle del Reporte y Carga Diferida (createSignedUrl)</span>
+                <span class="equipo-tag" style="font-size:1.05rem;">${this.escapeHtml(rep.codigo_equipo)}</span>
+                <span class="operativo-only-inline" style="color:#fbbf24; font-weight:900;">Detalle del Reporte</span>
+                <span class="tech-only-inline" style="color:#fbbf24; font-weight:900;">Detalle del Reporte y Carga Diferida (createSignedUrl)</span>
               </div>
               <div style="font-size:0.8rem; color:#cbd5e1; margin-top:0.2rem;">
-                UUID: <code>${rep.id}</code> • Fecha: <strong>${formatFechaDDMMYYYY(rep.fecha)} ${rep.hora_peru || ''}</strong> • Registrado por: <strong>${rep.creado_por_email || 'supervisor.mina@operacion.pe'}</strong>
+                <span class="tech-only-inline">UUID: <code>${this.escapeHtml(rep.id)}</code> • </span>Fecha: <strong>${formatFechaDDMMYYYY(rep.fecha)} ${rep.hora_peru || ''}</strong> • Registrado por: <strong>${this.escapeHtml(rep.creado_por_email || 'supervisor.mina@operacion.pe')}</strong>
               </div>
             </div>
             <button type="button" class="btn-mine btn-sm-mine btn-danger" id="btn-m6-close-modal">
@@ -1856,15 +1885,15 @@ export class HistorialModuleView {
           <div class="m6-modal-body">
             <!-- Metadatos del reporte -->
             <div class="m6-modal-meta-grid">
-              <div><strong>Equipo:</strong> ${rep.codigo_equipo} ${rep.es_nuevo_codigo || rep.fuera_catalogo ? '(Creado en campo)' : ''}</div>
+              <div><strong>Equipo:</strong> ${this.escapeHtml(rep.codigo_equipo)}</div>
               <div><strong>Fecha:</strong> ${formatFechaDDMMYYYY(rep.fecha)} (${rep.hora_peru || '--:--'})</div>
-              <div><strong>Tipo / Prioridad:</strong> ${rep.tipo} — Prioridad ${rep.prioridad}</div>
-              <div><strong>Dispositivo Emisor:</strong> ${rep.dispositivo || 'PWA Mina'}</div>
+              <div><strong>Tipo / Prioridad:</strong> ${this.escapeHtml(rep.tipo)} — Prioridad ${this.escapeHtml(rep.prioridad)}</div>
+              <div class="tech-only-block"><strong>Dispositivo Emisor:</strong> ${this.escapeHtml(rep.dispositivo || 'PWA Mina')}</div>
             </div>
 
             <div class="m2-obs-box" style="margin-top:0.75rem;">
               <strong>📌 Observación Principal:</strong>
-              <p style="margin:0.3rem 0 0 0; font-size:0.95rem;">${rep.observacion || ''}</p>
+              <p style="margin:0.3rem 0 0 0; font-size:0.95rem;">${this.escapeHtml(rep.observacion || '')}</p>
               ${
                 seguimientos.length > 0
                   ? `
@@ -1874,7 +1903,7 @@ export class HistorialModuleView {
                     .map(
                       (s, i) => `
                     <div style="margin-top:0.3rem; font-size:0.86rem;">
-                      <strong>#${i + 1} (${formatFechaDDMMYYYY(s.fecha)} — ${s.estado_seguimiento}):</strong> ${s.comentario}
+                      <strong>#${i + 1} (${formatFechaDDMMYYYY(s.fecha)} — ${this.escapeHtml(s.estado_seguimiento)}):</strong> ${this.escapeHtml(s.comentario)}
                     </div>
                   `
                     )
@@ -1889,12 +1918,13 @@ export class HistorialModuleView {
             <div style="margin-top:0.95rem;">
               <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:0.5rem; margin-bottom:0.65rem;">
                 <strong style="font-size:0.96rem;">
-                  📷 Fotos y Multimedia Cargados Bajo Demanda con <code>supabase.storage.from('fotos').createSignedUrl()</code>
+                  <span class="operativo-only-inline">📷 Fotos de Evidencia</span>
+                  <span class="tech-only-inline">📷 Fotos y Multimedia Cargados Bajo Demanda con <code>supabase.storage.from('fotos').createSignedUrl()</code></span>
                 </strong>
                 ${
                   media
-                    ? `<span class="storage-status-chip chip-ok">✅ ${media.totalSignedUrlsGenerated} URL(s) firmada(s) generada(s) (Expiración: 3600 s)</span>`
-                    : `<span class="storage-status-chip chip-warn">⏳ Generando URLs firmadas...</span>`
+                    ? `<span class="storage-status-chip chip-ok tech-only-inline">✅ ${media.totalSignedUrlsGenerated} URL(s) firmada(s) generada(s) (Expiración: 3600 s)</span>`
+                    : `<span class="storage-status-chip chip-warn tech-only-inline">⏳ Generando URLs firmadas...</span>`
                 }
               </div>
 
@@ -1902,7 +1932,8 @@ export class HistorialModuleView {
                 this.isLoadingDetailMedia || !media
                   ? `
                 <div style="padding:1.5rem; text-align:center; background:#f8fafc; border:2px dashed #0284c7; border-radius:8px;">
-                  <strong>⚡ Solicitando URLs firmadas temporales (createSignedUrl) a Supabase Storage...</strong>
+                  <strong class="operativo-only-inline">⏳ Cargando fotos de evidencia...</strong>
+                  <strong class="tech-only-inline">⚡ Solicitando URLs firmadas temporales (createSignedUrl) a Supabase Storage...</strong>
                 </div>
               `
                   : `
@@ -1912,21 +1943,25 @@ export class HistorialModuleView {
                       (ph) => `
                     <div class="m6-signed-photo-card">
                       <div class="m6-signed-photo-img-wrap">
-                        <img src="${ph.previewSrc}" alt="Foto ${ph.index} de ${rep.codigo_equipo}" />
+                        <img src="${this.escapeAttr(ph.previewSrc)}" alt="Foto ${ph.index} de ${this.escapeAttr(rep.codigo_equipo)}" />
                         <span class="m2-file-badge-overlay">
-                          Foto #${ph.index} • ${formatBytes(ph.sizeBytes)} (${ph.width}x${ph.height})
+                          Foto #${ph.index}<span class="tech-only-inline"> • ${formatBytes(ph.sizeBytes)} (${ph.width}x${ph.height})</span>
                         </span>
                       </div>
                       <div class="m6-signed-photo-info">
-                        <div><strong>Ruta Bucket Privado:</strong> <code>fotos/${ph.storagePath}</code></div>
-                        <div><strong>Modo de Carga:</strong> ${ph.originMode}</div>
-                        <div class="m6-signed-url-box">
-                          <strong>🔑 URL Firmada Temporal (createSignedUrl — Expira en 3600 s):</strong>
-                          <code>${ph.signedUrl}</code>
+                        <div class="tech-only-block">
+                          <div><strong>Ruta Bucket Privado:</strong> <code>fotos/${this.escapeHtml(ph.storagePath)}</code></div>
+                          <div><strong>Modo de Carga:</strong> ${this.escapeHtml(ph.originMode)}</div>
+                          <div class="m6-signed-url-box">
+                            <strong>🔑 URL Firmada Temporal (createSignedUrl — Expira en 3600 s):</strong>
+                            <code>${this.escapeHtml(ph.signedUrl)}</code>
+                          </div>
                         </div>
                         <a
-                          href="${ph.previewSrc}"
-                          download="${rep.codigo_equipo}_${rep.fecha}_foto_${ph.index}.jpg"
+                          href="${this.escapeAttr(ph.previewSrc)}"
+                          download="${this.escapeAttr(rep.codigo_equipo)}_${this.escapeAttr(rep.fecha)}_foto_${ph.index}.jpg"
+                          target="_blank"
+                          rel="noopener noreferrer"
                           class="btn-mine btn-sm-mine btn-primary"
                           style="text-decoration:none; text-align:center; margin-top:0.35rem;"
                         >
@@ -1943,12 +1978,15 @@ export class HistorialModuleView {
                   media.video
                     ? `
                   <div style="margin-top:0.8rem; padding:0.75rem; background:#f0f9ff; border:2px solid #0284c7; border-radius:8px;">
-                    <strong>🎥 Video Opcional Cargado con createSignedUrl:</strong>
-                    <div style="font-size:0.82rem; margin-top:0.25rem;">
-                      Ruta Storage: <code>fotos/${media.video.storagePath}</code> (${formatBytes(media.video.sizeBytes)})
-                    </div>
-                    <div class="m6-signed-url-box" style="margin-top:0.35rem;">
-                      <code>${media.video.signedUrl}</code>
+                    <strong class="operativo-only-inline">🎥 Video de Evidencia</strong>
+                    <strong class="tech-only-inline">🎥 Video Opcional Cargado con createSignedUrl:</strong>
+                    <div class="tech-only-block">
+                      <div style="font-size:0.82rem; margin-top:0.25rem;">
+                        Ruta Storage: <code>fotos/${this.escapeHtml(media.video.storagePath)}</code> (${formatBytes(media.video.sizeBytes)})
+                      </div>
+                      <div class="m6-signed-url-box" style="margin-top:0.35rem;">
+                        <code>${this.escapeHtml(media.video.signedUrl)}</code>
+                      </div>
                     </div>
                   </div>
                 `
@@ -2151,6 +2189,33 @@ export class HistorialModuleView {
         if (repId) {
           this.handleOpenReportDetailModal(repId);
         }
+      });
+    });
+
+    // Respaldo si falla la carga de alguna miniatura (URL expirada / sin red)
+    this.rootEl.querySelectorAll('img[data-m6-thumb-id]').forEach((imgEl) => {
+      imgEl.addEventListener('error', () => {
+        if (imgEl.dataset.fallbackApplied === '1') return;
+        imgEl.dataset.fallbackApplied = '1';
+        const repId = imgEl.getAttribute('data-m6-thumb-id');
+        if (repId) this.thumbUrlMap.delete(repId);
+        const rep = this.unifiedReports.find((r) => r.id === repId);
+        if (!rep) return;
+        const photoPaths =
+          Array.isArray(rep?.fotos_rutas) && rep.fotos_rutas.length > 0
+            ? rep.fotos_rutas
+            : Array.isArray(rep?.fotos)
+              ? rep.fotos
+              : [];
+        imgEl.src = buildCloudPhotoPreviewDataUri({
+          codigoEquipo: rep.codigo_equipo,
+          fecha: rep.fecha,
+          hora: rep.hora_peru,
+          photoNumber: 1,
+          totalPhotos: Math.max(photoPaths.length, 1),
+          storagePath: photoPaths[0] || `${rep.creado_por || 'campo'}/${rep.id}/1.jpg`,
+          calidad: rep.calidad_compresion
+        });
       });
     });
 
