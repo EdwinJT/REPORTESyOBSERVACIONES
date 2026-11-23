@@ -105,10 +105,22 @@ export class CapturaReporteView {
   }
 
   createObjectUrl(blob) {
-    if (!blob) return '';
+    if (!(blob instanceof Blob) || blob.size === 0) return '';
     const url = URL.createObjectURL(blob);
     this.objectUrls.push(url);
     return url;
+  }
+
+  getPhotoDisplayUrl(item) {
+    if (!item) return '';
+    if (item.blob instanceof Blob && item.blob.size > 0) {
+      return this.createObjectUrl(item.blob);
+    }
+    const signed = item.signedUrl || '';
+    if (/^https?:\/\//i.test(signed) && !signed.includes('/object/public/')) {
+      return signed;
+    }
+    return '';
   }
 
   isSegLevantada(seg) {
@@ -184,6 +196,56 @@ export class CapturaReporteView {
       });
   }
 
+  async hydratePhotoList(remotePaths = [], localFotos = [], calidad = 'estandar') {
+    const paths = Array.isArray(remotePaths) ? remotePaths : [];
+    const locals = Array.isArray(localFotos) ? localFotos : [];
+    const totalCount = Math.max(paths.length, locals.length);
+    if (totalCount === 0) return [];
+
+    const defaultW = calidad === 'alta' ? 2048 : 1600;
+    const defaultH = calidad === 'alta' ? 1536 : 1200;
+
+    return Promise.all(
+      Array.from({ length: totalCount }, async (_, i) => {
+        const localItem = locals[i] || null;
+        if (localItem?.blob instanceof Blob && localItem.blob.size > 0) {
+          return localItem;
+        }
+        const remotePath = paths[i] || localItem?.ruta_remota || '';
+        let signedUrl =
+          localItem?.signedUrl &&
+          /^https?:\/\//i.test(localItem.signedUrl) &&
+          !localItem.signedUrl.includes('/object/public/')
+            ? localItem.signedUrl
+            : '';
+
+        if (remotePath && pwaManager.getState().isOnline) {
+          try {
+            const signedRes = await supabase.storage
+              .from('fotos')
+              .createSignedUrl(remotePath, 3600);
+            const candidate = signedRes?.data?.signedUrl || '';
+            if (/^https?:\/\//i.test(candidate) && !candidate.includes('/object/public/')) {
+              signedUrl = candidate;
+            }
+          } catch {
+            // mantener fallback actual si falla temporalmente
+          }
+        }
+
+        return {
+          indice: localItem?.indice || i + 1,
+          blob: null,
+          signedUrl,
+          ruta_remota: remotePath,
+          peso_bytes: localItem?.peso_bytes || 0,
+          ancho: localItem?.ancho || defaultW,
+          alto: localItem?.alto || defaultH
+        };
+      })
+    );
+  }
+
   async hydrateRemoteSeguimientos(remSegs, localSegs = []) {
     if (!Array.isArray(remSegs)) return [];
     const localList = Array.isArray(localSegs) ? localSegs : [];
@@ -195,30 +257,8 @@ export class CapturaReporteView {
         const localFotos = Array.isArray(matchedLocal?.fotos_locales)
           ? matchedLocal.fotos_locales
           : [];
-        const hasLocalBlobs = localFotos.some((lf) => Boolean(lf?.blob));
-
-        let segFotosLocales = [];
-        if (hasLocalBlobs) {
-          segFotosLocales = localFotos;
-        } else {
-          const segPaths = Array.isArray(seg.fotos) ? seg.fotos : [];
-          segFotosLocales = await Promise.all(
-            segPaths.map(async (segPath, si) => {
-              const signedSeg = await supabase.storage
-                .from('fotos')
-                .createSignedUrl(segPath, 3600);
-              return {
-                indice: si + 1,
-                blob: null,
-                signedUrl: signedSeg?.data?.signedUrl || '',
-                ruta_remota: segPath,
-                peso_bytes: 0,
-                ancho: 1600,
-                alto: 1200
-              };
-            })
-          );
-        }
+        const segPaths = Array.isArray(seg.fotos) ? seg.fotos : [];
+        const segFotosLocales = await this.hydratePhotoList(segPaths, localFotos);
 
         return {
           ...matchedLocal,
@@ -291,18 +331,23 @@ export class CapturaReporteView {
                   mergedMap.set(rem.id, existingLoc);
                   return;
                 }
-                const mergedSegs = await this.hydrateRemoteSeguimientos(
-                  rem.seguimientos,
-                  existingLoc.seguimientos
-                );
+                const remotePaths = Array.isArray(rem.fotos)
+                  ? rem.fotos
+                  : existingLoc.fotos_rutas || [];
+                const [hydratedPhotos, mergedSegs] = await Promise.all([
+                  this.hydratePhotoList(
+                    remotePaths,
+                    existingLoc.fotos_locales || [],
+                    rem.calidad_compresion || existingLoc.calidad_compresion
+                  ),
+                  this.hydrateRemoteSeguimientos(rem.seguimientos, existingLoc.seguimientos)
+                ]);
                 mergedMap.set(rem.id, {
                   ...existingLoc,
                   ...rem,
-                  fotos_locales: existingLoc.fotos_locales || [],
+                  fotos_locales: hydratedPhotos,
                   video_local: existingLoc.video_local || null,
-                  fotos_rutas: Array.isArray(rem.fotos)
-                    ? rem.fotos
-                    : existingLoc.fotos_rutas || [],
+                  fotos_rutas: remotePaths,
                   seguimientos:
                     mergedSegs.length > 0 ? mergedSegs : existingLoc.seguimientos || [],
                   estado: 'sincronizado',
@@ -312,22 +357,7 @@ export class CapturaReporteView {
                 // Reporte creado en otro celular o PC: firmar URLs en paralelo (con caché en memoria)
                 const remotePaths = Array.isArray(rem.fotos) ? rem.fotos : [];
                 const [cloudPhotos, cloudSegs] = await Promise.all([
-                  Promise.all(
-                    remotePaths.map(async (remotePath, i) => {
-                      const signed = await supabase.storage
-                        .from('fotos')
-                        .createSignedUrl(remotePath, 3600);
-                      return {
-                        indice: i + 1,
-                        blob: null,
-                        signedUrl: signed?.data?.signedUrl || '',
-                        ruta_remota: remotePath,
-                        peso_bytes: 0,
-                        ancho: rem.calidad_compresion === 'alta' ? 2048 : 1600,
-                        alto: rem.calidad_compresion === 'alta' ? 1536 : 1200
-                      };
-                    })
-                  ),
+                  this.hydratePhotoList(remotePaths, [], rem.calidad_compresion),
                   this.hydrateRemoteSeguimientos(rem.seguimientos, [])
                 ]);
 
@@ -1780,7 +1810,12 @@ export class CapturaReporteView {
             <div class="preview-strip">
               ${(rep.fotos_locales || [])
                 .map((f, fIdx) => {
-                  const url = f.blob ? this.createObjectUrl(f.blob) : (f.signedUrl || '');
+                  const url = this.getPhotoDisplayUrl(f);
+                  const remotePath =
+                    f.ruta_remota ||
+                    (Array.isArray(rep.fotos_rutas) ? rep.fotos_rutas[fIdx] : '') ||
+                    (Array.isArray(rep.fotos) ? rep.fotos[fIdx] : '') ||
+                    '';
                   return `
                   <img
                     src="${url}"
@@ -1789,6 +1824,7 @@ export class CapturaReporteView {
                     data-open-viewer="${this.escapeHtml(rep.id)}"
                     data-viewer-seg="null"
                     data-viewer-idx="${fIdx}"
+                    ${remotePath ? `data-remote-path="${this.escapeHtml(remotePath)}"` : ''}
                     title="Toca para inspeccionar placa / detalle (${f.ancho}x${f.alto}px)"
                   />
                 `;
@@ -1967,7 +2003,11 @@ export class CapturaReporteView {
                   ? `<span style="font-size:0.78rem; color:var(--text-muted);">Sin foto adjunta</span>`
                   : segFotos
                       .map((f, fIdx) => {
-                        const url = f.blob ? this.createObjectUrl(f.blob) : (f.signedUrl || '');
+                        const url = this.getPhotoDisplayUrl(f);
+                        const remotePath =
+                          f.ruta_remota ||
+                          (Array.isArray(seg.fotos) ? seg.fotos[fIdx] : '') ||
+                          '';
                         return `
                         <img
                           src="${url}"
@@ -1976,6 +2016,7 @@ export class CapturaReporteView {
                           data-open-viewer="${this.escapeHtml(rep.id)}"
                           data-viewer-seg="${sIdx}"
                           data-viewer-idx="${fIdx}"
+                          ${remotePath ? `data-remote-path="${this.escapeHtml(remotePath)}"` : ''}
                         />
                       `;
                       })
@@ -2295,7 +2336,7 @@ export class CapturaReporteView {
       isSavingEdit = false,
       editError = null
     } = this.viewerModal;
-    const url = blob ? this.createObjectUrl(blob) : (signedUrl || '');
+    const url = this.getPhotoDisplayUrl({ blob, signedUrl });
     const colors = ['#EF4444', '#FACC15', '#F26522', '#38BDF8', '#FFFFFF'];
 
     return `
@@ -2434,7 +2475,7 @@ export class CapturaReporteView {
 
     const thumbsHtml = m.fotos_locales
       .map((f, fIdx) => {
-        const url = f.blob ? this.createObjectUrl(f.blob) : f.signedUrl || '';
+        const url = this.getPhotoDisplayUrl(f);
         const sizeLabel = f.peso_bytes ? formatBytes(f.peso_bytes) : 'Nube';
         return `
           <div class="followup-thumb-chip">
@@ -2686,7 +2727,7 @@ export class CapturaReporteView {
 
     const thumbsHtml = m.fotos_locales
       .map((f, fIdx) => {
-        const url = f.blob ? this.createObjectUrl(f.blob) : f.signedUrl || '';
+        const url = this.getPhotoDisplayUrl(f);
         const sizeLabel = f.peso_bytes ? formatBytes(f.peso_bytes) : 'Nube';
         return `
           <div class="followup-thumb-chip">
@@ -3251,7 +3292,27 @@ export class CapturaReporteView {
       .querySelector('#btn-guardar-reporte')
       ?.addEventListener('click', () => this.handleSaveReport());
 
-    // Eventos en la Tabla Principal: Visor de fotos/videos, Descarga en visor y Seguimiento (↳)
+    // Eventos en la Tabla Principal: Visor de fotos/videos, recuperación de miniaturas, Descarga en visor y Seguimiento (↳)
+    this.rootEl.querySelectorAll('img.table-thumb[data-remote-path]').forEach((imgEl) => {
+      imgEl.addEventListener('error', async () => {
+        if (imgEl.dataset.retrySigned === '1') return;
+        imgEl.dataset.retrySigned = '1';
+        const remotePath = imgEl.getAttribute('data-remote-path');
+        if (!remotePath || !pwaManager.getState().isOnline) return;
+        try {
+          const cleanPath = String(remotePath).replace(/^\/+/, '');
+          supabase._signedUrlCache?.delete?.(`fotos/${cleanPath}`);
+          const res = await supabase.storage.from('fotos').createSignedUrl(cleanPath, 3600);
+          const freshUrl = res?.data?.signedUrl || '';
+          if (/^https?:\/\//i.test(freshUrl) && !freshUrl.includes('/object/public/')) {
+            imgEl.src = freshUrl;
+          }
+        } catch {
+          // ignorar si no hay red
+        }
+      });
+    });
+
     this.rootEl.querySelectorAll('[data-open-viewer]').forEach((img) => {
       img.addEventListener('click', () => {
         const repId = img.getAttribute('data-open-viewer');
