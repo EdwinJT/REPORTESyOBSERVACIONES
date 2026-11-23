@@ -22,7 +22,8 @@ import { pwaManager } from '../../services/pwaManager.js';
 import { syncQueue } from '../../services/syncQueue.js';
 import {
   syncEquipmentsFromCloudReports,
-  createOrTouchEquipment
+  createOrTouchEquipment,
+  inferEquipmentCategory
 } from '../../services/equipmentService.js';
 import {
   exportFilteredReportsToExcel,
@@ -122,6 +123,7 @@ export class HistorialModuleView {
 
     this.banner = null;
     this.objectUrls = [];
+    this.thumbUrlMap = new Map();
 
     this.unsubAuth = null;
     this.unsubSync = null;
@@ -677,16 +679,54 @@ export class HistorialModuleView {
     return authService.getState().userEmail || 'Supervisor de Guardia';
   }
 
-  async resolveReportPrimaryThumbSrc(rep) {
+  getImmediateThumbSrc(rep) {
+    if (this.thumbUrlMap.has(rep.id)) {
+      return this.thumbUrlMap.get(rep.id);
+    }
     const localBlob = Array.isArray(rep?.fotos_locales) ? rep.fotos_locales[0]?.blob : null;
     if (localBlob) {
       const objUrl = URL.createObjectURL(localBlob);
       this.objectUrls.push(objUrl);
+      this.thumbUrlMap.set(rep.id, objUrl);
+      return objUrl;
+    }
+    const existingSigned = Array.isArray(rep?.fotos_locales) ? rep.fotos_locales[0]?.signedUrl : '';
+    if (existingSigned) {
+      this.thumbUrlMap.set(rep.id, existingSigned);
+      return existingSigned;
+    }
+    const photoPaths =
+      Array.isArray(rep?.fotos_rutas) && rep.fotos_rutas.length > 0
+        ? rep.fotos_rutas
+        : Array.isArray(rep?.fotos)
+          ? rep.fotos
+          : [];
+    return buildCloudPhotoPreviewDataUri({
+      codigoEquipo: rep.codigo_equipo,
+      fecha: rep.fecha,
+      hora: rep.hora_peru,
+      photoNumber: 1,
+      totalPhotos: Math.max(photoPaths.length, 1),
+      storagePath: photoPaths[0] || `${rep.creado_por || 'campo'}/${rep.id}/1.jpg`,
+      calidad: rep.calidad_compresion
+    });
+  }
+
+  async resolveReportPrimaryThumbSrc(rep) {
+    if (this.thumbUrlMap.has(rep.id)) {
+      return this.thumbUrlMap.get(rep.id);
+    }
+    const localBlob = Array.isArray(rep?.fotos_locales) ? rep.fotos_locales[0]?.blob : null;
+    if (localBlob) {
+      const objUrl = URL.createObjectURL(localBlob);
+      this.objectUrls.push(objUrl);
+      this.thumbUrlMap.set(rep.id, objUrl);
       return objUrl;
     }
 
     const existingSigned = Array.isArray(rep?.fotos_locales) ? rep.fotos_locales[0]?.signedUrl : '';
     if (existingSigned) {
+      this.thumbUrlMap.set(rep.id, existingSigned);
       return existingSigned;
     }
 
@@ -702,6 +742,7 @@ export class HistorialModuleView {
       try {
         const signed = await supabase.storage.from('fotos').createSignedUrl(storagePath, 3600);
         if (signed?.data?.signedUrl) {
+          this.thumbUrlMap.set(rep.id, signed.data.signedUrl);
           return signed.data.signedUrl;
         }
       } catch {
@@ -718,6 +759,22 @@ export class HistorialModuleView {
       storagePath: storagePath || `${rep.creado_por || 'campo'}/${rep.id}/1.jpg`,
       calidad: rep.calidad_compresion
     });
+  }
+
+  async hydrateVisibleThumbnails(reports = []) {
+    if (!pwaManager.getState().isOnline || !Array.isArray(reports) || reports.length === 0) return;
+    await Promise.all(
+      reports.map(async (rep) => {
+        if (!rep?.id || this.thumbUrlMap.has(rep.id)) return;
+        const resolvedUrl = await this.resolveReportPrimaryThumbSrc(rep);
+        if (!resolvedUrl || !this.rootEl) return;
+        this.rootEl.querySelectorAll(`img[data-m6-thumb-id="${rep.id}"]`).forEach((imgEl) => {
+          if (imgEl.src !== resolvedUrl) {
+            imgEl.src = resolvedUrl;
+          }
+        });
+      })
+    );
   }
 
   /**
@@ -1138,12 +1195,19 @@ export class HistorialModuleView {
 
     const hoy = getFechaHoyPeru();
     const hoyFormatted = formatFechaDDMMYYYY(hoy);
+    const hoyShort = hoyFormatted.slice(0, 5);
     const hace3d = this.getOffsetDatePeru(2);
     const hace7d = this.getOffsetDatePeru(6);
     const isHoyPreset = this.filters.fechaDesde === hoy && this.filters.fechaHasta === hoy;
     const is3dPreset = this.filters.fechaDesde === hace3d && this.filters.fechaHasta === hoy;
     const is7dPreset = this.filters.fechaDesde === hace7d && this.filters.fechaHasta === hoy;
     const isTodoPreset = !this.filters.fechaDesde && !this.filters.fechaHasta;
+
+    const periodRangeLabel = isTodoPreset
+      ? 'Mostrando todas las fechas'
+      : isHoyPreset
+        ? `Mostrando solo hoy (${hoyFormatted})`
+        : `Periodo: ${this.filters.fechaDesde ? formatFechaDDMMYYYY(this.filters.fechaDesde) : 'Inicio'} → ${this.filters.fechaHasta ? formatFechaDDMMYYYY(this.filters.fechaHasta) : hoyFormatted}`;
 
     // Conteo por código de equipo en el historial unificado
     const countByEquipo = {};
@@ -1170,41 +1234,94 @@ export class HistorialModuleView {
             : ''
         }
 
-        <!-- ENCABEZADO DEL MÓDULO 6: CENTRO DE REPORTE DIARIO DE GUARDIA E HISTORIAL -->
-        <section class="panel-card">
-          <div class="panel-header">
-            <h2 class="panel-title">
-              <span class="operativo-only-inline">📊 Centro de Reporte Diario de Guardia e Historial</span>
-              <span class="tech-only-inline">📊 Módulo 6 (M6): Centro de Reporte Diario, Historial Unificado (Local + Supabase) y Exportación Excel</span>
-            </h2>
-            <span class="panel-badge" style="background:#22c55e; color:#0f172a;">
-              ✅ ${filteredReports.length} / ${totalUnified} REPORTES <span class="tech-only-inline">(${syncedInCloudCount} EN NUBE)</span>
-            </span>
+        <!-- TARJETA 1: CABECERA EJECUTIVA DE REPORTE DIARIO, FILTROS HORIZONTALES Y 4 KPIs -->
+        <section class="section-panel m6-daily-control-panel" aria-label="Centro de Reporte Diario de Guardia e Historial">
+          <div class="m6-daily-top-header">
+            <div class="m6-daily-title-group">
+              <div class="m6-daily-title-line">
+                <span class="m6-section-pill">REPORTE DIARIO</span>
+                <h2 class="m6-panel-heading">📊 Centro de Reporte Diario de Guardia e Historial</h2>
+              </div>
+              <p class="m6-panel-subheading">
+                Filtra por rango de fechas, verifica las prioridades críticas y descarga el reporte formal listo para entregar a Mantenimiento o Jefatura.
+              </p>
+            </div>
+
+            <div class="m6-top-export-actions">
+              <button
+                type="button"
+                class="btn-mine btn-m6-excel"
+                id="btn-m6-export-excel"
+                title="Descargar Excel Diario (.xls) con encabezado STRACON, datos de guardia, resumen ejecutivo y prioridades resaltadas"
+              >
+                📊 Excel Diario (.xls) · ${filteredReports.length}
+              </button>
+
+              <button
+                type="button"
+                class="btn-mine btn-m6-pdf"
+                id="btn-m6-print-daily"
+                title="Abrir hoja formal de Entrega de Guardia lista para guardar como PDF o imprimir"
+              >
+                🖨️ Reporte PDF / Imprimir
+              </button>
+
+              <button
+                type="button"
+                class="btn-mine btn-m6-wa"
+                id="btn-m6-copy-whatsapp"
+                title="Copiar resumen diario estructurado al portapapeles para pegar en WhatsApp"
+              >
+                📋 Copiar WhatsApp
+              </button>
+
+              <button
+                type="button"
+                class="btn-mine btn-amber tech-only-inline"
+                id="btn-m6-run-p10-lab"
+                ${this.isRunningP10 ? 'disabled' : ''}
+              >
+                ${
+                  this.isRunningP10
+                    ? '⏳ Ejecutando P10...'
+                    : '🧪 Prueba Escenario P10'
+                }
+              </button>
+
+              <button
+                type="button"
+                class="btn-mine btn-secondary tech-only-inline"
+                id="btn-m6-simulate-teammate"
+                title="Simula que otro técnico en campo sincroniza un reporte desde su celular hacia Supabase"
+              >
+                📱+☁️ Simular Otro Celular
+              </button>
+            </div>
           </div>
 
-          <div class="panel-body">
-            <!-- Datos de Entrega de Guardia (para Excel, PDF/Impresión y WhatsApp) -->
+          <div class="m6-control-body">
+            <!-- Datos de Entrega de Guardia (Turno, Frente/Proyecto, Supervisor) -->
             <div class="m6-daily-meta-grid">
-              <div class="form-group">
-                <label class="form-label" for="m6-daily-turno">🕒 Turno / Guardia:</label>
+              <div class="m6-field-item">
+                <label class="m6-field-label" for="m6-daily-turno">🕒 TURNO / GUARDIA</label>
                 <select id="m6-daily-turno" class="form-control">
                   <option value="Guardia Día (07:00 - 19:00)" ${this.dailyMeta.turno === 'Guardia Día (07:00 - 19:00)' ? 'selected' : ''}>☀️ Guardia Día (07:00 - 19:00)</option>
                   <option value="Guardia Noche (19:00 - 07:00)" ${this.dailyMeta.turno === 'Guardia Noche (19:00 - 07:00)' ? 'selected' : ''}>🌙 Guardia Noche (19:00 - 07:00)</option>
                   <option value="Día Completo (24h)" ${this.dailyMeta.turno === 'Día Completo (24h)' ? 'selected' : ''}>📅 Día Completo (24h)</option>
                 </select>
               </div>
-              <div class="form-group">
-                <label class="form-label" for="m6-daily-zona">📍 Frente / Proyecto:</label>
+              <div class="m6-field-item">
+                <label class="m6-field-label" for="m6-daily-zona">📍 FRENTE / PROYECTO</label>
                 <input
                   type="text"
                   id="m6-daily-zona"
                   class="form-control"
                   value="${this.escapeAttr(this.dailyMeta.zona)}"
-                  placeholder="Ej: Tajo Norte — Operaciones STRACON"
+                  placeholder="Tajo Norte — Operaciones STRACON"
                 />
               </div>
-              <div class="form-group">
-                <label class="form-label" for="m6-daily-supervisor">👷 Supervisor Responsable:</label>
+              <div class="m6-field-item">
+                <label class="m6-field-label" for="m6-daily-supervisor">👷 SUPERVISOR RESPONSABLE</label>
                 <input
                   type="text"
                   id="m6-daily-supervisor"
@@ -1215,7 +1332,109 @@ export class HistorialModuleView {
               </div>
             </div>
 
-            <!-- 4 KPIs ejecutivos de entrega de guardia -->
+            <!-- Barra de Rango Rápido + Ordenamiento -->
+            <div class="m6-quick-range-bar">
+              <div class="m6-quick-presets-left">
+                <span class="m6-inline-label">⚡ RANGO RÁPIDO:</span>
+                <button type="button" class="m6-preset-btn ${isHoyPreset ? 'is-active' : ''}" id="btn-m6-date-today">
+                  Solo Hoy (${hoyShort})
+                </button>
+                <button type="button" class="m6-preset-btn ${is3dPreset ? 'is-active' : ''}" id="btn-m6-date-3d">
+                  Últimos 3 días
+                </button>
+                <button type="button" class="m6-preset-btn ${is7dPreset ? 'is-active' : ''}" id="btn-m6-date-7d">
+                  Últimos 7 días
+                </button>
+                <button type="button" class="m6-preset-btn ${isTodoPreset ? 'is-active' : ''}" id="btn-m6-date-all">
+                  Todo el historial
+                </button>
+              </div>
+
+              <div class="m6-quick-sort-right">
+                <select id="m6-filter-orden" class="form-control m6-sort-select" aria-label="Ordenar reportes">
+                  <option value="prioridad" ${this.filters.orden === 'prioridad' ? 'selected' : ''}>Ordenar: Críticos primero</option>
+                  <option value="equipo" ${this.filters.orden === 'equipo' ? 'selected' : ''}>Ordenar: Por Equipo</option>
+                  <option value="fecha" ${this.filters.orden === 'fecha' ? 'selected' : ''}>Ordenar: Más recientes</option>
+                </select>
+                <button type="button" class="m6-preset-btn" id="btn-m6-clear-filters" title="Limpiar filtros">
+                  🧹 Limpiar
+                </button>
+                <button type="button" class="m6-preset-btn" id="btn-m6-refresh-cloud" title="Refrescar desde Supabase Cloud">
+                  🔄 Refrescar
+                </button>
+              </div>
+            </div>
+
+            <!-- Filtros Horizontales (Fecha Desde / Fecha Hasta / Equipo / Estado) -->
+            <div class="m6-filters-horizontal-grid">
+              <div class="m6-field-item">
+                <label class="m6-field-label" for="m6-filter-desde">📅 FECHA DESDE</label>
+                <input
+                  type="date"
+                  id="m6-filter-desde"
+                  class="form-control"
+                  value="${this.escapeAttr(this.filters.fechaDesde)}"
+                />
+              </div>
+              <div class="m6-field-item">
+                <label class="m6-field-label" for="m6-filter-hasta">📅 FECHA HASTA</label>
+                <input
+                  type="date"
+                  id="m6-filter-hasta"
+                  class="form-control"
+                  value="${this.escapeAttr(this.filters.fechaHasta)}"
+                />
+              </div>
+              <div class="m6-field-item">
+                <label class="m6-field-label" for="m6-filter-equipo">🚜 EQUIPO</label>
+                <select id="m6-filter-equipo" class="form-control">
+                  <option value="TODOS" ${this.filters.codigoEquipo === 'TODOS' ? 'selected' : ''}>
+                    Todos los equipos (${this.catalogSummary.equipos.length})
+                  </option>
+                  ${this.catalogSummary.equipos
+                    .map((eq) => {
+                      const cnt = countByEquipo[eq.codigo] || 0;
+                      return `<option value="${eq.codigo}" ${
+                        this.filters.codigoEquipo === eq.codigo ? 'selected' : ''
+                      }>${eq.codigo} (${cnt})</option>`;
+                    })
+                    .join('')}
+                </select>
+              </div>
+              <div class="m6-field-item">
+                <label class="m6-field-label" for="m6-filter-estado-op">📌 ESTADO</label>
+                <select id="m6-filter-estado-op" class="form-control">
+                  <option value="TODOS" ${this.filters.estadoOperativo === 'TODOS' ? 'selected' : ''}>Todos (Activas + Levantadas)</option>
+                  <option value="ACTIVAS" ${this.filters.estadoOperativo === 'ACTIVAS' ? 'selected' : ''}>⚠️ Solo Activas (Pend.)</option>
+                  <option value="LEVANTADAS" ${this.filters.estadoOperativo === 'LEVANTADAS' ? 'selected' : ''}>✅ Solo Levantadas</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Buscador + Filtro Técnico -->
+            <div class="m6-search-row">
+              <div class="m6-field-item m6-search-field">
+                <label class="m6-field-label" for="m6-filter-search">🔍 BUSCAR EN TEXTO</label>
+                <input
+                  type="search"
+                  id="m6-filter-search"
+                  class="form-control"
+                  placeholder="Ej: fuga, dientes, espejo..."
+                  value="${this.escapeAttr(this.filters.searchText)}"
+                />
+              </div>
+              <div class="m6-field-item tech-only-block">
+                <label class="m6-field-label" for="m6-filter-origen">🌐 ORIGEN TÉCNICO</label>
+                <select id="m6-filter-origen" class="form-control">
+                  <option value="TODOS" ${this.filters.origen === 'TODOS' ? 'selected' : ''}>Todos (${totalUnified})</option>
+                  <option value="EN_NUBE" ${this.filters.origen === 'EN_NUBE' ? 'selected' : ''}>☁️ En Supabase (${syncedInCloudCount})</option>
+                  <option value="OTROS_DISPOSITIVOS" ${this.filters.origen === 'OTROS_DISPOSITIVOS' ? 'selected' : ''}>📱 Otros Dispositivos (${fromOtherDevicesCount})</option>
+                  <option value="SOLO_LOCAL" ${this.filters.origen === 'SOLO_LOCAL' ? 'selected' : ''}>⏳ Solo Locales (${pendingLocalCount})</option>
+                </select>
+              </div>
+            </div>
+
+            <!-- Semáforo Ejecutivo: 4 KPIs -->
             <div class="m6-kpi-grid">
               <div class="m6-kpi-card">
                 <div class="m6-kpi-value">${filteredReports.length}</div>
@@ -1234,124 +1453,10 @@ export class HistorialModuleView {
                 <div class="m6-kpi-label">✅ Levantadas</div>
               </div>
             </div>
-
-            <div class="m2-metrics-grid tech-only-block" style="margin-bottom:0.9rem;">
-              <!-- Tarjeta 1: Historial Unificado -->
-              <div class="m2-metric-card">
-                <div class="m2-metric-header">
-                  <span class="m2-metric-title">1. Historial Unificado (Local + Nube)</span>
-                  <span class="storage-status-chip chip-ok">0 DUPLICADOS UUID</span>
-                </div>
-                <div class="m2-metric-value">${totalUnified} reporte(s)</div>
-                <p class="m2-metric-desc">
-                  <strong>${syncedInCloudCount}</strong> en Supabase (<strong>${fromOtherDevicesCount}</strong> de otros dispositivos del equipo) y
-                  <strong>${pendingLocalCount}</strong> pendiente(s) en este dispositivo.
-                </p>
-              </div>
-
-              <!-- Tarjeta 2: Catálogo Compartido de Equipos -->
-              <div class="m2-metric-card">
-                <div class="m2-metric-header">
-                  <span class="m2-metric-title">2. Catálogo Compartido de Equipos</span>
-                  <span class="storage-status-chip chip-ok">
-                    🔄 ${this.catalogSummary.cloudImportedCount} DE NUBE
-                  </span>
-                </div>
-                <div class="m2-metric-value">${this.catalogSummary.totalCatalogCount} códigos activos</div>
-                <p class="m2-metric-desc">
-                  <strong>${this.catalogSummary.manualCount}</strong> creados localmente y
-                  <strong>${this.catalogSummary.cloudImportedCount}</strong> sincronizados desde reportes del equipo en Supabase (disponibles en M1).
-                </p>
-              </div>
-
-              <!-- Tarjeta 3: Carga Diferida (Lazy Loading) con createSignedUrl -->
-              <div class="m2-metric-card">
-                <div class="m2-metric-header">
-                  <span class="m2-metric-title">3. Multimedia Lazy Load (createSignedUrl)</span>
-                  <span class="storage-status-chip chip-ok">⚡ BAJO DEMANDA</span>
-                </div>
-                <div class="m2-metric-value">${this.totalLazySignedUrlsSession} URL(s) firmada(s)</div>
-                <p class="m2-metric-desc">
-                  Las fotos y videos de la nube <strong>solo</strong> generan URLs firmadas (<code>createSignedUrl</code>) al abrir el detalle de un reporte.
-                </p>
-              </div>
-
-              <!-- Tarjeta 4: Exportación a Excel (.xlsx) sin URLs firmadas -->
-              <div class="m2-metric-card">
-                <div class="m2-metric-header">
-                  <span class="m2-metric-title">4. Exportación a Excel (.xlsx)</span>
-                  <span class="storage-status-chip chip-ok">0 URLs CADUCABLES</span>
-                </div>
-                <div class="m2-metric-value">${filteredReports.length} fila(s) listas</div>
-                <p class="m2-metric-desc">
-                  Exporta solo los registros filtrados a <code>.xlsx</code> con sus 20 columnas operativas y rutas permanentes de Storage (sin tokens que caducan).
-                </p>
-              </div>
-            </div>
-
-            <!-- Barra rápida de entrega de Reporte Diario y acciones M6 -->
-            <div class="m5-actions-toolbar">
-              <button
-                type="button"
-                class="btn-mine btn-success"
-                id="btn-m6-export-excel"
-                title="Descargar Excel Diario (.xls) con encabezado STRACON, datos de guardia, resumen ejecutivo y prioridades resaltadas"
-              >
-                📊 Excel Diario (.xls) · ${filteredReports.length} filas
-              </button>
-
-              <button
-                type="button"
-                class="btn-mine btn-primary"
-                id="btn-m6-print-daily"
-                title="Abrir hoja formal de Entrega de Guardia lista para guardar como PDF o imprimir"
-              >
-                🖨️ Reporte PDF / Imprimir
-              </button>
-
-              <button
-                type="button"
-                class="btn-mine btn-amber"
-                id="btn-m6-copy-whatsapp"
-                title="Copiar resumen diario estructurado al portapapeles para pegar en WhatsApp"
-              >
-                📋 Copiar WhatsApp
-              </button>
-
-              <button
-                type="button"
-                class="btn-mine btn-secondary"
-                id="btn-m6-refresh-cloud"
-              >
-                🔄 Refrescar
-              </button>
-
-              <button
-                type="button"
-                class="btn-mine btn-amber tech-only-inline"
-                id="btn-m6-run-p10-lab"
-                ${this.isRunningP10 ? 'disabled' : ''}
-              >
-                ${
-                  this.isRunningP10
-                    ? '⏳ Ejecutando Escenario P10...'
-                    : '🧪 Ejecutar Prueba Automatizada Escenario P10 (Celular ➔ PC ➔ Filtro ➔ Detalle ➔ Excel)'
-                }
-              </button>
-
-              <button
-                type="button"
-                class="btn-mine btn-primary tech-only-inline"
-                id="btn-m6-simulate-teammate"
-                title="Simula que otro técnico en campo sincroniza un reporte desde su celular hacia Supabase"
-              >
-                📱+☁️ Simular Reporte Recibido de Otro Celular en Campo
-              </button>
-            </div>
           </div>
         </section>
 
-        <!-- LABORATORIO AUTOMATIZADO ESCENARIO P10 (SI SE EJECUTÓ O PARA VALIDACIÓN DIRECTA) -->
+        <!-- LABORATORIO AUTOMATIZADO ESCENARIO P10 (SOLO MODO INGENIERÍA) -->
         ${
           this.p10Steps.length > 0
             ? `
@@ -1387,308 +1492,53 @@ export class HistorialModuleView {
             : ''
         }
 
-        <!-- AUDITORÍA DEL ARCHIVO EXCEL (.XLSX) GENERADO -->
+        <!-- AUDITORÍA DE EXPORTACIÓN A EXCEL (SOLO MODO INGENIERÍA O TRAS DESCARGA SI APLICA) -->
         ${
           this.lastExcelExportAudit
-            ? this.renderExcelExportAuditPanel(this.lastExcelExportAudit)
+            ? `<div class="tech-only-block">${this.renderExcelExportAuditPanel(this.lastExcelExportAudit)}</div>`
             : ''
         }
 
-        <!-- LAYOUT DE DOS COLUMNAS EN PANTALLAS ANCHAS (PC):
-             Columna Izquierda: Filtros + Catálogo Compartido de Equipos
-             Columna Derecha: Historial Unificado (Vista Tabla en PC / Vista Tarjetas en Celular) -->
-        <div class="m6-two-column-layout">
-          <!-- COLUMNA IZQUIERDA: FILTROS OPERATIVOS Y CATÁLOGO COMPARTIDO -->
-          <aside class="m6-sidebar-column">
-            <!-- Panel de Filtros M6 -->
-            <section class="panel-card">
-              <div class="panel-header">
-                <h2 class="panel-title">
-                  <span class="operativo-only-inline">🔎 Filtros y Rango de Fechas</span>
-                  <span class="tech-only-inline">🔎 Filtros del Historial Unificado</span>
-                </h2>
-                <button
-                  type="button"
-                  class="btn-mine btn-sm-mine btn-secondary"
-                  id="btn-m6-clear-filters"
-                  style="min-height:32px; padding:0.2rem 0.6rem;"
-                >
-                  🧹 Limpiar
+        <!-- TARJETA 2: VISTA PREVIA DEL REPORTE (100% ANCHO) -->
+        <section class="section-panel m6-preview-panel" aria-label="Vista Previa del Reporte Diario">
+          <div class="m6-preview-header">
+            <div class="m6-daily-title-line">
+              <span class="m6-section-pill">VISTA PREVIA DEL REPORTE</span>
+              <h2 class="m6-preview-heading">📋 Detalle de Novedades del Periodo (${filteredReports.length})</h2>
+            </div>
+            <span class="m6-period-summary">${this.escapeHtml(periodRangeLabel)}</span>
+          </div>
+
+          <div class="m6-preview-body">
+            ${
+              filteredReports.length === 0
+                ? `
+              <div class="m6-empty-box">
+                <strong style="font-size:1.05rem;">No se encontraron reportes con los filtros seleccionados.</strong>
+                <p style="margin:0.45rem 0 1rem 0; font-size:0.9rem; color:var(--text-muted);">
+                  Prueba limpiando los filtros o sincronizando un nuevo reporte.
+                </p>
+                <button type="button" class="btn-mine btn-primary" id="btn-m6-empty-reset">
+                  🧹 Mostrar todos los reportes (${totalUnified})
                 </button>
               </div>
-              <div class="panel-body" style="display:flex; flex-direction:column; gap:0.75rem;">
-                <!-- Atajos rápidos de fecha -->
-                <div class="m6-presets-row">
-                  <button type="button" class="btn-mine btn-sm-mine ${isHoyPreset ? 'btn-primary' : 'btn-secondary'}" id="btn-m6-date-today">
-                    📅 Solo Hoy (${hoyFormatted})
-                  </button>
-                  <button type="button" class="btn-mine btn-sm-mine ${is3dPreset ? 'btn-primary' : 'btn-secondary'}" id="btn-m6-date-3d">
-                    Últimos 3 días
-                  </button>
-                  <button type="button" class="btn-mine btn-sm-mine ${is7dPreset ? 'btn-primary' : 'btn-secondary'}" id="btn-m6-date-7d">
-                    Últimos 7 días
-                  </button>
-                  <button type="button" class="btn-mine btn-sm-mine ${isTodoPreset ? 'btn-primary' : 'btn-secondary'}" id="btn-m6-date-all">
-                    🗓️ Todo
-                  </button>
+            `
+                : `
+              <div class="m6-responsive-list-wrapper mode-${this.viewLayoutMode}">
+                <!-- 1. VISTA DE TABLA EJECUTIVA (PC / PANTALLAS ANCHAS) -->
+                <div class="m6-desktop-table-view">
+                  ${this.renderDesktopTable(filteredReports)}
                 </div>
 
-                <!-- Rango de fechas (Desde / Hasta) -->
-                <div class="form-grid-2">
-                  <div class="form-group">
-                    <label class="form-label" for="m6-filter-desde">📅 Fecha Desde:</label>
-                    <input
-                      type="date"
-                      id="m6-filter-desde"
-                      class="form-control"
-                      value="${this.escapeAttr(this.filters.fechaDesde)}"
-                    />
-                  </div>
-                  <div class="form-group">
-                    <label class="form-label" for="m6-filter-hasta">📅 Fecha Hasta:</label>
-                    <input
-                      type="date"
-                      id="m6-filter-hasta"
-                      class="form-control"
-                      value="${this.escapeAttr(this.filters.fechaHasta)}"
-                    />
-                  </div>
-                </div>
-
-                <!-- Búsqueda por texto en observación -->
-                <div class="form-group">
-                  <label class="form-label" for="m6-filter-search">🔍 Buscar en Observación / Comentarios:</label>
-                  <input
-                    type="search"
-                    id="m6-filter-search"
-                    class="form-control"
-                    placeholder="Ej: fisura, placa, hidráulica, 793F-05..."
-                    value="${this.escapeAttr(this.filters.searchText)}"
-                  />
-                </div>
-
-                <!-- Selector de Código de Equipo -->
-                <div class="form-group">
-                  <label class="form-label" for="m6-filter-equipo">🚜 Equipo:</label>
-                  <select id="m6-filter-equipo" class="form-control">
-                    <option value="TODOS" ${this.filters.codigoEquipo === 'TODOS' ? 'selected' : ''}>
-                      Todos los equipos (${totalUnified} reportes)
-                    </option>
-                    ${this.catalogSummary.equipos
-                      .map((eq) => {
-                        const cnt = countByEquipo[eq.codigo] || 0;
-                        return `<option value="${eq.codigo}" ${
-                          this.filters.codigoEquipo === eq.codigo ? 'selected' : ''
-                        }>${eq.codigo} — ${cnt} reporte(s)</option>`;
-                      })
-                      .join('')}
-                  </select>
-                </div>
-
-                <!-- Estado Operativo y Orden -->
-                <div class="form-grid-2">
-                  <div class="form-group">
-                    <label class="form-label" for="m6-filter-estado-op">📌 Estado:</label>
-                    <select id="m6-filter-estado-op" class="form-control">
-                      <option value="TODOS" ${this.filters.estadoOperativo === 'TODOS' ? 'selected' : ''}>Todos (Activas + Levantadas)</option>
-                      <option value="ACTIVAS" ${this.filters.estadoOperativo === 'ACTIVAS' ? 'selected' : ''}>⚠️ Solo Activas (Pend.)</option>
-                      <option value="LEVANTADAS" ${this.filters.estadoOperativo === 'LEVANTADAS' ? 'selected' : ''}>✅ Solo Levantadas</option>
-                    </select>
-                  </div>
-                  <div class="form-group">
-                    <label class="form-label" for="m6-filter-orden">↕️ Ordenar por:</label>
-                    <select id="m6-filter-orden" class="form-control">
-                      <option value="prioridad" ${this.filters.orden === 'prioridad' ? 'selected' : ''}>🔴 Críticos primero</option>
-                      <option value="equipo" ${this.filters.orden === 'equipo' ? 'selected' : ''}>🚜 Por Equipo</option>
-                      <option value="fecha" ${this.filters.orden === 'fecha' ? 'selected' : ''}>📅 Más recientes</option>
-                    </select>
-                  </div>
-                </div>
-
-                <!-- Tipo y Prioridad -->
-                <div class="form-grid-2">
-                  <div class="form-group">
-                    <label class="form-label" for="m6-filter-tipo">Tipo:</label>
-                    <select id="m6-filter-tipo" class="form-control">
-                      <option value="TODOS" ${this.filters.tipo === 'TODOS' ? 'selected' : ''}>Todos</option>
-                      <option value="Observación" ${this.filters.tipo === 'Observación' ? 'selected' : ''}>Observación</option>
-                      <option value="Reporte" ${this.filters.tipo === 'Reporte' ? 'selected' : ''}>Reporte</option>
-                    </select>
-                  </div>
-
-                  <div class="form-group">
-                    <label class="form-label" for="m6-filter-prioridad">Prioridad:</label>
-                    <select id="m6-filter-prioridad" class="form-control">
-                      <option value="TODAS" ${this.filters.prioridad === 'TODAS' ? 'selected' : ''}>Todas</option>
-                      <option value="Alta" ${this.filters.prioridad === 'Alta' ? 'selected' : ''}>🔴 Alta</option>
-                      <option value="Media" ${this.filters.prioridad === 'Media' ? 'selected' : ''}>🟡 Media</option>
-                      <option value="Baja" ${this.filters.prioridad === 'Baja' ? 'selected' : ''}>🟢 Baja</option>
-                    </select>
-                  </div>
-                </div>
-
-                <!-- Origen del Registro (Solo modo ingeniería) -->
-                <div class="form-group tech-only-block">
-                  <label class="form-label" for="m6-filter-origen">Origen Técnico (Local / Supabase):</label>
-                  <select id="m6-filter-origen" class="form-control">
-                    <option value="TODOS" ${this.filters.origen === 'TODOS' ? 'selected' : ''}>
-                      🌐 Todos (Locales + Supabase Cloud)
-                    </option>
-                    <option value="EN_NUBE" ${this.filters.origen === 'EN_NUBE' ? 'selected' : ''}>
-                      ☁️ Confirmados en Supabase (${syncedInCloudCount})
-                    </option>
-                    <option value="OTROS_DISPOSITIVOS" ${this.filters.origen === 'OTROS_DISPOSITIVOS' ? 'selected' : ''}>
-                      📱 Recibidos de Otros Dispositivos (${fromOtherDevicesCount})
-                    </option>
-                    <option value="SOLO_LOCAL" ${this.filters.origen === 'SOLO_LOCAL' ? 'selected' : ''}>
-                      ⏳ Solo Locales sin subir (${pendingLocalCount})
-                    </option>
-                  </select>
-                </div>
-
-                <!-- Resumen de filtro activo -->
-                <div class="m6-filter-summary-box">
-                  <div>
-                    <strong>Resultado:</strong>
-                    <span>Mostrando <strong>${filteredReports.length}</strong> de <strong>${totalUnified}</strong> reportes.</span>
-                  </div>
-                  <button
-                    type="button"
-                    class="btn-mine btn-sm-mine btn-success"
-                    id="btn-m6-export-excel-sidebar"
-                    style="width:100%; margin-top:0.45rem;"
-                  >
-                    📊 Exportar estos ${filteredReports.length} reportes a Excel
-                  </button>
+                <!-- 2. VISTA DE TARJETAS ERGONÓMICAS (CELULAR / PANTALLAS MÓVILES) -->
+                <div class="m6-mobile-cards-view">
+                  ${this.renderMobileCards(filteredReports)}
                 </div>
               </div>
-            </section>
-
-            <!-- Panel del Catálogo de Equipos (Filtro Rápido) -->
-            <section class="panel-card" style="margin-top:1rem;">
-              <div class="panel-header">
-                <h2 class="panel-title">🚜 Filtro Rápido por Equipo</h2>
-                <span class="panel-badge">${this.catalogSummary.totalCatalogCount} códigos</span>
-              </div>
-              <div class="panel-body">
-                <p class="tech-only-block" style="margin:0 0 0.65rem 0; font-size:0.82rem; color:var(--text-muted);">
-                  Cualquier código de equipo registrado por otro técnico en Supabase se descarga automáticamente a <code>localDb.equipos</code> para que esté disponible en el selector de M1 y como filtro rápido aquí:
-                </p>
-
-                <div class="m6-shared-catalog-list">
-                  <button
-                    type="button"
-                    class="m6-catalog-chip ${this.filters.codigoEquipo === 'TODOS' ? 'active' : ''}"
-                    data-filter-eq="TODOS"
-                  >
-                    <div>
-                      <strong>📋 TODOS LOS EQUIPOS</strong>
-                      <span class="m6-catalog-origin">Vista completa</span>
-                    </div>
-                    <span class="m6-catalog-count">${totalUnified}</span>
-                  </button>
-
-                  ${this.catalogSummary.equipos
-                    .map((eq) => {
-                      const cnt = countByEquipo[eq.codigo] || 0;
-                      const isCloud = eq.origen === 'nube';
-                      return `
-                      <button
-                        type="button"
-                        class="m6-catalog-chip ${this.filters.codigoEquipo === eq.codigo ? 'active' : ''}"
-                        data-filter-eq="${eq.codigo}"
-                      >
-                        <div>
-                          <strong>${eq.codigo}</strong>
-                          <span class="m6-catalog-origin tech-only-inline ${isCloud ? 'from-cloud' : 'from-local'}">
-                            ${isCloud ? '☁️ Sincronizado de Nube' : '👤 Creado Localmente'}
-                          </span>
-                        </div>
-                        <span class="m6-catalog-count">${cnt} rep.</span>
-                      </button>
-                    `;
-                    })
-                    .join('')}
-                </div>
-              </div>
-            </section>
-          </aside>
-
-          <!-- COLUMNA DERECHA: VISTA PREVIA DEL REPORTE DIARIO -->
-          <div class="m6-content-column">
-            <section class="panel-card">
-              <div class="panel-header">
-                <div>
-                  <h2 class="panel-title">
-                    <span class="operativo-only-inline">📋 Detalle de Novedades del Periodo (${filteredReports.length})</span>
-                    <span class="tech-only-inline">📋 Historial Unificado de Reportes y Observaciones (${filteredReports.length} mostrados)</span>
-                  </h2>
-                  <div class="tech-only-block" style="font-size:0.79rem; color:#cbd5e1; margin-top:0.15rem;">
-                    ⚡ Carga diferida activa: Las fotos de la nube solo generan URLs firmadas (<code>createSignedUrl</code>) al abrir el detalle.
-                  </div>
-                </div>
-
-                <!-- Conmutador de Diseño Adaptable (Auto Responsive / Tabla PC / Tarjetas Celular) -->
-                <div class="m6-view-mode-switcher" role="group" aria-label="Modo de visualización">
-                  <button
-                    type="button"
-                    class="btn-mine btn-sm-mine ${this.viewLayoutMode === 'auto' ? 'btn-amber' : 'btn-secondary'}"
-                    data-view-mode="auto"
-                    style="min-height:36px;"
-                  >
-                    🖥️📱 Auto (PC Tabla / Celular Tarjetas)
-                  </button>
-                  <button
-                    type="button"
-                    class="btn-mine btn-sm-mine ${this.viewLayoutMode === 'table' ? 'btn-amber' : 'btn-secondary'}"
-                    data-view-mode="table"
-                    style="min-height:36px;"
-                  >
-                    📊 Tabla (PC)
-                  </button>
-                  <button
-                    type="button"
-                    class="btn-mine btn-sm-mine ${this.viewLayoutMode === 'cards' ? 'btn-amber' : 'btn-secondary'}"
-                    data-view-mode="cards"
-                    style="min-height:36px;"
-                  >
-                    📱 Tarjetas (Celular)
-                  </button>
-                </div>
-              </div>
-
-              <div class="panel-body">
-                ${
-                  filteredReports.length === 0
-                    ? `
-                  <div style="padding:2rem; text-align:center; background:#f8fafc; color:#0f172a; border:2px dashed #64748b; border-radius:10px;">
-                    <strong style="font-size:1.05rem;">No se encontraron reportes con los filtros seleccionados.</strong>
-                    <p style="margin:0.5rem 0 1rem 0; font-size:0.9rem; color:#475569;">
-                      Prueba limpiando los filtros o sincronizando un nuevo reporte.
-                    </p>
-                    <button type="button" class="btn-mine btn-primary" id="btn-m6-empty-reset">
-                      🧹 Mostrar todos los reportes (${totalUnified})
-                    </button>
-                  </div>
-                `
-                    : `
-                  <div class="m6-responsive-list-wrapper mode-${this.viewLayoutMode}">
-                    <!-- 1. VISTA DE TABLA OPERATIVA (PC / PANTALLAS ANCHAS) -->
-                    <div class="m6-desktop-table-view">
-                      ${this.renderDesktopTable(filteredReports)}
-                    </div>
-
-                    <!-- 2. VISTA DE TARJETAS ERGONÓMICAS (CELULAR / PANTALLAS MÓVILES) -->
-                    <div class="m6-mobile-cards-view">
-                      ${this.renderMobileCards(filteredReports)}
-                    </div>
-                  </div>
-                `
-                }
-              </div>
-            </section>
+            `
+            }
           </div>
-        </div>
+        </section>
 
         <!-- MODAL DE DETALLE DEL REPORTE CON CARGA DIFERIDA (LAZY LOADING) DE URLs FIRMADAS -->
         ${this.selectedDetailReport ? this.renderDetailModal() : ''}
@@ -1696,26 +1546,20 @@ export class HistorialModuleView {
     `;
 
     this.bindEvents();
+    this.hydrateVisibleThumbnails(filteredReports).catch(() => {});
   }
 
   renderDesktopTable(reports) {
     return `
       <div class="table-responsive">
-        <table class="ops-table">
+        <table class="m6-executive-table">
           <thead>
             <tr>
-              <th>1. Equipo</th>
-              <th>2. Fecha (Inicial / Seg.)</th>
-              <th>
-                <span class="operativo-only-inline">3. Estado / Turno</span>
-                <span class="tech-only-inline">3. Origen / Estado Sync</span>
-              </th>
-              <th>4. Tipo / Prioridad</th>
-              <th>5. Observación Principal y Seguimientos (↳)</th>
-              <th>
-                <span class="operativo-only-inline">6. Evidencia y Detalle</span>
-                <span class="tech-only-inline">6. Multimedia (Lazy Load) y Detalle</span>
-              </th>
+              <th style="width:14%;">EQUIPO / FECHA</th>
+              <th style="width:11%;">EVIDENCIA</th>
+              <th>OBSERVACIÓN Y SEGUIMIENTO (↳)</th>
+              <th style="width:12%;">PRIORIDAD</th>
+              <th style="width:14%;">ESTADO</th>
             </tr>
           </thead>
           <tbody>
@@ -1729,21 +1573,17 @@ export class HistorialModuleView {
                 const hasVideo = Boolean(rep.video_ruta || rep.video || rep.video_local);
                 const seguimientos = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
                 const isLev = this.isReportLevantada(rep);
-                const prioClass =
+                const prioUpper = String(rep.prioridad || 'Media').toUpperCase();
+                const prioBadgeClass =
                   rep.prioridad === 'Alta'
-                    ? 'badge-prio-alta'
+                    ? 'badge-alta'
                     : rep.prioridad === 'Media'
-                      ? 'badge-prio-media'
-                      : 'badge-prio-baja';
-
-                let originBadge = '';
-                if (rep.origen_unificado === 'solo_nube') {
-                  originBadge = `<span class="m6-origin-pill cloud-other">☁️ Nube (Otro Dispositivo)</span>`;
-                } else if (rep.origen_unificado === 'local_y_nube') {
-                  originBadge = `<span class="m6-origin-pill local-and-cloud">🟢 Local + Nube (Supabase)</span>`;
-                } else {
-                  originBadge = `<span class="m6-origin-pill local-only">⏳ Solo Local (${rep.estado})</span>`;
-                }
+                      ? 'badge-media'
+                      : 'badge-baja';
+                const equipCat = inferEquipmentCategory(rep.codigo_equipo);
+                const thumbSrc = this.getImmediateThumbSrc(rep);
+                const authorRaw = rep.creado_por_email || 'Sup. Guardia';
+                const authorShort = authorRaw.includes('@') ? authorRaw.split('@')[0] : authorRaw;
 
                 const opStatusPill = isLev
                   ? `<span class="m6-status-pill is-resolved">✅ Levantada</span>`
@@ -1752,111 +1592,70 @@ export class HistorialModuleView {
                 return `
                 <tr>
                   <td>
-                    <div style="display:flex; flex-direction:column; gap:0.25rem; align-items:flex-start;">
-                      <span class="equipo-tag">${rep.codigo_equipo}</span>
-                      <span class="tech-only-inline" style="font-size:0.73rem; font-family:monospace; color:#475569;">
-                        UUID: ${rep.id.slice(0, 8)}...
+                    <div class="m6-col-equipo-wrap">
+                      <span class="m6-equipo-code">${this.escapeHtml(rep.codigo_equipo)}</span>
+                      <span class="m6-equipo-date">${this.escapeHtml(formatFechaDDMMYYYY(rep.fecha))}</span>
+                      <span class="m6-equipo-cat">${this.escapeHtml(equipCat)}</span>
+                    </div>
+                  </td>
+
+                  <td>
+                    <button
+                      type="button"
+                      class="m6-evidence-thumb-btn"
+                      data-open-detail="${this.escapeAttr(rep.id)}"
+                      title="Ver fotos y detalle completo (${fotosCount} foto(s))"
+                    >
+                      <img
+                        src="${thumbSrc}"
+                        data-m6-thumb-id="${this.escapeAttr(rep.id)}"
+                        alt="Evidencia ${this.escapeAttr(rep.codigo_equipo)}"
+                        loading="lazy"
+                      />
+                      <span class="m6-evidence-count-badge">
+                        ${fotosCount} foto(s)${hasVideo ? ' + 🎥' : ''}
                       </span>
+                    </button>
+                  </td>
+
+                  <td>
+                    <div class="m6-obs-cell-wrap">
+                      <div class="m6-obs-main-text">
+                        ${this.escapeHtml(rep.observacion || 'Sin observación registrada.')}
+                      </div>
                       ${
-                        rep.es_nuevo_codigo || rep.fuera_catalogo
-                          ? `<span style="font-size:0.7rem; background:#e0f2fe; color:#0369a1; padding:0.1rem 0.4rem; border-radius:4px; font-weight:800;">+ Catálogo</span>`
+                        seguimientos.length > 0
+                          ? seguimientos
+                              .map((seg) => {
+                                const segResolved =
+                                  (seg.estado_seguimiento || '').toLowerCase().includes('levantada');
+                                return `
+                                <div class="m6-inline-followup ${segResolved ? 'is-resolved' : ''}">
+                                  <strong>↳ ${this.escapeHtml(formatFechaDDMMYYYY(seg.fecha))} (${this.escapeHtml(seg.estado_seguimiento || 'Sigue observación')}):</strong>
+                                  <span>${this.escapeHtml(seg.comentario || '')}</span>
+                                </div>
+                              `;
+                              })
+                              .join('')
                           : ''
                       }
                     </div>
                   </td>
 
                   <td>
-                    <div class="cell-initial-block">
-                      <span class="pin-label">📌 Inicial:</span>
-                      <strong>${formatFechaDDMMYYYY(rep.fecha)}</strong>
-                      <div style="font-size:0.76rem; color:#475569;">🕒 ${rep.hora_peru || '--:--'}</div>
-                    </div>
-                    ${
-                      seguimientos.length > 0
-                        ? `
-                      <div class="cell-followup-block">
-                        ${seguimientos
-                          .map(
-                            (seg, sIdx) => `
-                          <div style="font-size:0.79rem; margin-top:0.2rem;">
-                            <span class="followup-arrow">↳ Seg. #${sIdx + 1}:</span>
-                            <strong>${formatFechaDDMMYYYY(seg.fecha)}</strong>
-                          </div>
-                        `
-                          )
-                          .join('')}
-                      </div>
-                    `
-                        : ''
-                    }
-                  </td>
-
-                  <td>
-                    <div style="display:flex; flex-direction:column; gap:0.3rem; align-items:flex-start;">
-                      <span class="operativo-only-inline">${opStatusPill}</span>
-                      <span class="operativo-only-inline" style="font-size:0.74rem; color:var(--text-muted); font-weight:700;">
-                        ${rep.en_nube_confirmado ? '☁️ En nube' : '⏳ Pendiente subir'}
-                      </span>
-                      <span class="tech-only-inline">${originBadge}</span>
-                      <span style="font-size:0.76rem; color:#334155;">
-                        👤 ${rep.creado_por_email || 'supervisor.mina@operacion.pe'}
-                      </span>
-                      <span class="tech-only-inline" style="font-size:0.74rem; color:#64748b;">
-                        📱 ${rep.dispositivo || 'PWA Mina'}
+                    <div class="m6-col-prio-wrap">
+                      <span class="m6-tipo-label">${this.escapeHtml(rep.tipo || 'Observación')}</span>
+                      <span class="badge badge-prio-pill ${prioBadgeClass}">
+                        <span class="prio-dot" aria-hidden="true">●</span> ${this.escapeHtml(prioUpper)}
                       </span>
                     </div>
                   </td>
 
                   <td>
-                    <div style="display:flex; flex-direction:column; gap:0.35rem; align-items:flex-start;">
-                      <span class="badge-tipo">${rep.tipo}</span>
-                      <span class="${prioClass}">Prioridad ${rep.prioridad}</span>
-                    </div>
-                  </td>
-
-                  <td>
-                    <div class="cell-initial-block">
-                      <span class="pin-label">📌 Observación Principal:</span>
-                      <p style="margin:0.2rem 0 0 0; font-size:0.88rem; line-height:1.35;">
-                        ${rep.observacion || 'Sin observación registrada.'}
-                      </p>
-                    </div>
-                    ${
-                      seguimientos.length > 0
-                        ? `
-                      <div class="cell-followup-block">
-                        ${seguimientos
-                          .map(
-                            (seg) => `
-                          <div style="margin-top:0.25rem; font-size:0.82rem;">
-                            <span class="followup-arrow">↳ ${seg.estado_seguimiento || '⚠️ Sigue observación'}:</span>
-                            <span>${seg.comentario || ''}</span>
-                          </div>
-                        `
-                          )
-                          .join('')}
-                      </div>
-                    `
-                        : ''
-                    }
-                  </td>
-
-                  <td>
-                    <div style="display:flex; flex-direction:column; gap:0.4rem;">
-                      <div style="font-size:0.8rem; font-weight:800; color:#0f172a;">
-                        📷 ${fotosCount} foto(s) ${hasVideo ? '+ 🎥 1 video' : ''}
-                        <span class="tech-only-inline" style="display:block; font-size:0.72rem; color:#0369a1; font-weight:700;">
-                          ⚡ Lazy Load (Sin descargar aún)
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        class="btn-mine btn-sm-mine btn-primary"
-                        data-open-detail="${rep.id}"
-                      >
-                        <span class="operativo-only-inline">🔍 Ver Fotos y Detalle</span>
-                        <span class="tech-only-inline">🔍 Abrir Detalle y Fotos (createSignedUrl)</span>
-                      </button>
+                    <div class="m6-col-estado-wrap">
+                      ${opStatusPill}
+                      <span class="m6-estado-author">👷 ${this.escapeHtml(authorShort)}</span>
+                      <span class="m6-estado-cloud">${rep.en_nube_confirmado ? '☁️ En nube' : '⏳ Pendiente'}</span>
                     </div>
                   </td>
                 </tr>
@@ -1882,12 +1681,13 @@ export class HistorialModuleView {
             const hasVideo = Boolean(rep.video_ruta || rep.video || rep.video_local);
             const seguimientos = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
             const isLev = this.isReportLevantada(rep);
-            const prioClass =
+            const prioUpper = String(rep.prioridad || 'Media').toUpperCase();
+            const prioBadgeClass =
               rep.prioridad === 'Alta'
-                ? 'badge-prio-alta'
+                ? 'badge-alta'
                 : rep.prioridad === 'Media'
-                  ? 'badge-prio-media'
-                  : 'badge-prio-baja';
+                  ? 'badge-media'
+                  : 'badge-baja';
 
             let originBadge = '';
             if (rep.origen_unificado === 'solo_nube') {
@@ -1906,9 +1706,11 @@ export class HistorialModuleView {
             <article class="m6-mobile-card">
               <div class="m6-mobile-card-header">
                 <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
-                  <span class="equipo-tag">${rep.codigo_equipo}</span>
-                  <span class="badge-tipo">${rep.tipo}</span>
-                  <span class="${prioClass}">${rep.prioridad}</span>
+                  <span class="equipo-tag">${this.escapeHtml(rep.codigo_equipo)}</span>
+                  <span class="m6-tipo-label">${this.escapeHtml(rep.tipo)}</span>
+                  <span class="badge badge-prio-pill ${prioBadgeClass}">
+                    <span class="prio-dot" aria-hidden="true">●</span> ${this.escapeHtml(prioUpper)}
+                  </span>
                 </div>
                 <span class="operativo-only-inline">${opStatusPill}</span>
                 <span class="tech-only-inline">${originBadge}</span>
