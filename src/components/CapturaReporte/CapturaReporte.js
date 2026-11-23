@@ -1795,7 +1795,7 @@ export class CapturaReporteView {
               <div style="font-size:0.74rem; color:var(--text-muted); font-weight:700;">📌 Fecha Inicial</div>
               <div style="font-size:0.96rem; font-weight:900; margin-top:0.12rem; white-space:nowrap;">📅 ${this.escapeHtml(formatFechaDDMMYYYY(rep.fecha))}</div>
             </div>
-            <span style="font-size:0.75rem; color:var(--text-muted);">
+            <span class="tech-only-inline" style="font-size:0.75rem; color:var(--text-muted);">
               ID: ${this.escapeHtml(rep.id.slice(0, 8))}
             </span>
           </div>
