@@ -1214,12 +1214,22 @@ export class CapturaReporteView {
         ? this.reportes
         : this.reportes.filter((r) => r.codigo_equipo === this.filtroEquipo);
 
-    const reportesFiltrados = reportesPorEquipo.filter((r) => {
-      const f = String(r.fecha || '');
+    const isDateInRange = (fechaStr) => {
+      const f = String(fechaStr || '');
+      if (!f) return false;
       if (this.filtroFechaDesde && f < this.filtroFechaDesde) return false;
       if (this.filtroFechaHasta && f > this.filtroFechaHasta) return false;
       return true;
-    });
+    };
+
+    const hasDateFilter = Boolean(this.filtroFechaDesde || this.filtroFechaHasta);
+    const reportesFiltrados = hasDateFilter
+      ? reportesPorEquipo.filter((r) => {
+          if (isDateInRange(r.fecha)) return true;
+          const segs = Array.isArray(r.seguimientos) ? r.seguimientos : [];
+          return segs.some((s) => isDateInRange(s?.fecha));
+        })
+      : reportesPorEquipo;
 
     const reportesActivos = reportesFiltrados.filter((r) => !this.isReportLevantada(r));
     const reportesLevantados = reportesFiltrados.filter((r) => this.isReportLevantada(r));
