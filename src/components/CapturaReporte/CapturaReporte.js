@@ -50,6 +50,7 @@ export class CapturaReporteView {
     this.filtroEquipo = 'TODOS';
     this.filtroFechaDesde = '';
     this.filtroFechaHasta = '';
+    this.filtroIncluirSeguimientos = true;
     this.vistaTabla = initialTableTab === 'levantadas' ? 'levantadas' : 'activas';
 
     // Estado minimizado/expandido del Panel 2 ("Nuevo Reporte")
@@ -1226,6 +1227,7 @@ export class CapturaReporteView {
     const reportesFiltrados = hasDateFilter
       ? reportesPorEquipo.filter((r) => {
           if (isDateInRange(r.fecha)) return true;
+          if (!this.filtroIncluirSeguimientos) return false;
           const segs = Array.isArray(r.seguimientos) ? r.seguimientos : [];
           return segs.some((s) => isDateInRange(s?.fecha));
         })
@@ -1718,6 +1720,18 @@ export class CapturaReporteView {
                   value="${this.escapeHtml(this.filtroFechaHasta)}"
                   aria-label="Filtrar hasta fecha"
                 />
+                <label
+                  class="table-date-check-label"
+                  for="tabla-filtro-incluir-seg"
+                  title="Incluir también observaciones que tuvieron seguimiento dentro del rango de fechas"
+                >
+                  <input
+                    type="checkbox"
+                    id="tabla-filtro-incluir-seg"
+                    ${this.filtroIncluirSeguimientos ? 'checked' : ''}
+                  />
+                  <span>Incluir seguimientos</span>
+                </label>
                 ${
                   this.filtroFechaDesde || this.filtroFechaHasta
                     ? `
@@ -3162,6 +3176,11 @@ export class CapturaReporteView {
     this.rootEl.querySelector('#btn-clear-date-filter')?.addEventListener('click', () => {
       this.filtroFechaDesde = '';
       this.filtroFechaHasta = '';
+      this.render();
+    });
+
+    this.rootEl.querySelector('#tabla-filtro-incluir-seg')?.addEventListener('change', (e) => {
+      this.filtroIncluirSeguimientos = Boolean(e.target.checked);
       this.render();
     });
 

@@ -710,6 +710,41 @@ body.theme-night .table-date-label {
   font-size: 0.82rem;
 }
 
+.table-date-check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 34px;
+  padding: 0.18rem 0.55rem;
+  border-radius: 6px;
+  background: #F1F5F9;
+  border: 1px solid #CBD5E1;
+  color: #002B5C;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.table-date-check-label input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #002B5C;
+  cursor: pointer;
+}
+
+body.theme-night .table-date-check-label {
+  background: #13263B;
+  border-color: #3B628E;
+  color: #E2E8F0;
+}
+
+body.theme-night .table-date-check-label input[type='checkbox'] {
+  accent-color: #60A5FA;
+}
+
 @media (max-width: 640px) {
   .table-header-controls {
     width: 100%;
