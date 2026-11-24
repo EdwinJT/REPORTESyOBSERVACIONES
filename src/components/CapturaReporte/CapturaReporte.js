@@ -1689,7 +1689,7 @@ export class CapturaReporteView {
                           ? `Todos los equipos: ${reportesLevantados.length}`
                           : `Equipo ${this.escapeHtml(this.filtroEquipo)}: ${reportesLevantados.length}`
                       })`
-                    : `📊 3. Tabla Principal (${
+                    : `📊 3. Tabla Principal de Observaciones (${
                         this.filtroEquipo === 'TODOS'
                           ? `Todos los equipos: ${reportesActivos.length}`
                           : `Filtrado por equipo ${this.escapeHtml(this.filtroEquipo)}: ${reportesActivos.length}`
