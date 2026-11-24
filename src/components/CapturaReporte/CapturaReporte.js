@@ -46,8 +46,10 @@ export class CapturaReporteView {
     this.reportes = [];
     this.objectUrls = [];
 
-    // Filtro activo en Cuadro de Equipos ("TODOS" o código específico)
+    // Filtro activo en Cuadro de Equipos ("TODOS" o código específico) y rango de fechas
     this.filtroEquipo = 'TODOS';
+    this.filtroFechaDesde = '';
+    this.filtroFechaHasta = '';
     this.vistaTabla = initialTableTab === 'levantadas' ? 'levantadas' : 'activas';
 
     // Estado minimizado/expandido del Panel 2 ("Nuevo Reporte")
@@ -1212,8 +1214,15 @@ export class CapturaReporteView {
         ? this.reportes
         : this.reportes.filter((r) => r.codigo_equipo === this.filtroEquipo);
 
-    const reportesActivos = reportesPorEquipo.filter((r) => !this.isReportLevantada(r));
-    const reportesLevantados = reportesPorEquipo.filter((r) => this.isReportLevantada(r));
+    const reportesFiltrados = reportesPorEquipo.filter((r) => {
+      const f = String(r.fecha || '');
+      if (this.filtroFechaDesde && f < this.filtroFechaDesde) return false;
+      if (this.filtroFechaHasta && f > this.filtroFechaHasta) return false;
+      return true;
+    });
+
+    const reportesActivos = reportesFiltrados.filter((r) => !this.isReportLevantada(r));
+    const reportesLevantados = reportesFiltrados.filter((r) => this.isReportLevantada(r));
     const reportesVisibles =
       this.vistaTabla === 'levantadas' ? reportesLevantados : reportesActivos;
 
@@ -1681,15 +1690,49 @@ export class CapturaReporteView {
                   : ''
               }
             </div>
-            ${
-              this.filtroEquipo !== 'TODOS'
-                ? `
-              <button type="button" class="btn-mine btn-sm-mine btn-secondary" id="btn-clear-filter">
-                Mostrar Todos los Equipos
-              </button>
-            `
-                : ''
-            }
+            <div class="table-header-controls">
+              <div class="table-date-filter-bar" role="group" aria-label="Filtrar tabla por rango de fechas">
+                <label class="table-date-label" for="tabla-filtro-desde">📅 Desde</label>
+                <input
+                  type="date"
+                  id="tabla-filtro-desde"
+                  class="input-mine table-date-input"
+                  value="${this.escapeHtml(this.filtroFechaDesde)}"
+                  aria-label="Filtrar desde fecha"
+                />
+                <label class="table-date-label" for="tabla-filtro-hasta">Hasta</label>
+                <input
+                  type="date"
+                  id="tabla-filtro-hasta"
+                  class="input-mine table-date-input"
+                  value="${this.escapeHtml(this.filtroFechaHasta)}"
+                  aria-label="Filtrar hasta fecha"
+                />
+                ${
+                  this.filtroFechaDesde || this.filtroFechaHasta
+                    ? `
+                  <button
+                    type="button"
+                    class="btn-mine btn-sm-mine btn-secondary"
+                    id="btn-clear-date-filter"
+                    title="Quitar filtro de fechas"
+                  >
+                    ✕ Limpiar
+                  </button>
+                `
+                    : ''
+                }
+              </div>
+              ${
+                this.filtroEquipo !== 'TODOS'
+                  ? `
+                <button type="button" class="btn-mine btn-sm-mine btn-secondary" id="btn-clear-filter">
+                  Mostrar Todos los Equipos
+                </button>
+              `
+                  : ''
+              }
+            </div>
           </div>
 
           <div class="table-status-tabs" role="tablist" aria-label="Vista de observaciones activas vs levantadas">
@@ -3089,6 +3132,28 @@ export class CapturaReporteView {
         this.render();
       });
     }
+
+    this.rootEl.querySelector('#tabla-filtro-desde')?.addEventListener('change', (e) => {
+      this.filtroFechaDesde = e.target.value || '';
+      if (this.filtroFechaDesde && this.filtroFechaHasta && this.filtroFechaDesde > this.filtroFechaHasta) {
+        this.filtroFechaHasta = this.filtroFechaDesde;
+      }
+      this.render();
+    });
+
+    this.rootEl.querySelector('#tabla-filtro-hasta')?.addEventListener('change', (e) => {
+      this.filtroFechaHasta = e.target.value || '';
+      if (this.filtroFechaDesde && this.filtroFechaHasta && this.filtroFechaHasta < this.filtroFechaDesde) {
+        this.filtroFechaDesde = this.filtroFechaHasta;
+      }
+      this.render();
+    });
+
+    this.rootEl.querySelector('#btn-clear-date-filter')?.addEventListener('click', () => {
+      this.filtroFechaDesde = '';
+      this.filtroFechaHasta = '';
+      this.render();
+    });
 
     // Cambios en los campos del formulario principal
     const selectEquipo = this.rootEl.querySelector('#select-codigo-equipo');
