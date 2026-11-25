@@ -5,7 +5,7 @@
  * abra en Modo Avión (Escenario P5) tras cerrarse completamente.
  */
 
-const CACHE_VERSION = 'v1.9.47-fix-miniaturas-historial-pdf';
+const CACHE_VERSION = 'v1.9.48-grabar-audio-opcional';
 const APP_SHELL_CACHE = `mineria-pwa-appshell-${CACHE_VERSION}`;
 
 const PRECACHE_ASSETS = [
@@ -31,6 +31,7 @@ const PRECACHE_ASSETS = [
   './src/services/excelExporter.js',
   './src/utils/codeNormalizer.js',
   './src/utils/datePeru.js',
+  './src/utils/audioMedia.js',
   './src/components/CapturaReporte/CapturaReporte.js',
   './src/components/CapturaReporte/demoSeed.js',
   './src/components/MisReportes/MisReportes.js',

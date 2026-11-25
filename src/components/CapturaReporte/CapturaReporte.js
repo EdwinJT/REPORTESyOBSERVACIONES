@@ -32,6 +32,11 @@ import {
 import { authService } from '../../services/authService.js';
 import { pwaManager } from '../../services/pwaManager.js';
 import { syncQueue } from '../../services/syncQueue.js';
+import {
+  AudioRecorderController,
+  formatAudioDuration,
+  unpackVideoAudioField
+} from '../../utils/audioMedia.js';
 
 const CREATE_PANEL_COLLAPSED_KEY = 'mineria_create_panel_collapsed_v1';
 
@@ -73,12 +78,17 @@ export class CapturaReporteView {
       observacion: '',
       fotos_locales: [], // 1 a 5 fotos
       video_local: null, // 0 o 1 video
+      audio_local: null, // 0 o 1 nota de voz opcional
       observaciones_adicionales: [] // "+ Agregar otra observación"
     };
 
     this.banner = null; // { type: 'error' | 'success', text: string }
     this.obsValidationError = null;
     this.isCompressing = false;
+    this._audioRecorder = new AudioRecorderController();
+    this._recordingTarget = null; // 'main' | 'followup' | 'edit' | 'extra:<idx>'
+    this._recordingElapsedSec = 0;
+    this._audioError = null; // { target: string, message: string }
     this.viewerModal = null; // { title, url, isVideo, meta }
     this._viewerDrawState = null;
     this.followupModal = null; // { reporteId, codigo_equipo, fecha, estado_seguimiento, comentario, fotos_locales, video_local, validationError }
@@ -94,6 +104,11 @@ export class CapturaReporteView {
       this.form.codigo_equipo = this.equipos[0].codigo;
     }
     this.render();
+  }
+
+  destroy() {
+    this.cancelActiveAudioRecording();
+    this.revokeAllUrls();
   }
 
   revokeAllUrls() {
@@ -124,6 +139,170 @@ export class CapturaReporteView {
       return signed;
     }
     return '';
+  }
+
+  getAudioDisplayUrl(audioItem) {
+    return this.getPhotoDisplayUrl(audioItem);
+  }
+
+  cancelActiveAudioRecording() {
+    if (this._audioRecorder?.isRecording) {
+      this._audioRecorder.cancel();
+    }
+    this._recordingTarget = null;
+    this._recordingElapsedSec = 0;
+  }
+
+  _assignAudioToTarget(targetKey, audioObj) {
+    if (targetKey === 'main') {
+      this.form.audio_local = audioObj;
+    } else if (targetKey === 'followup' && this.followupModal) {
+      this.followupModal.audio_local = audioObj;
+    } else if (targetKey === 'edit' && this.editReportModal) {
+      this.editReportModal.audio_local = audioObj;
+    } else if (targetKey.startsWith('extra:')) {
+      const idx = Number(targetKey.slice(6));
+      if (this.form.observaciones_adicionales[idx]) {
+        this.form.observaciones_adicionales[idx].audio_local = audioObj;
+      }
+    }
+  }
+
+  async handleToggleAudioRecording(targetKey) {
+    // Si ya estamos grabando este mismo destino, detener y guardar la nota de voz
+    if (this._recordingTarget === targetKey && this._audioRecorder.isRecording) {
+      try {
+        const audioData = await this._audioRecorder.stop();
+        this._recordingTarget = null;
+        this._recordingElapsedSec = 0;
+        this._audioError = null;
+        if (audioData) {
+          this._assignAudioToTarget(targetKey, audioData);
+        }
+      } catch (err) {
+        this._recordingTarget = null;
+        this._recordingElapsedSec = 0;
+        this._audioError = {
+          target: targetKey,
+          message: err?.message || 'No se pudo completar la grabación de audio.'
+        };
+      }
+      this.render();
+      return;
+    }
+
+    // Si había otra grabación activa, cancelarla antes de iniciar una nueva
+    if (this._audioRecorder.isRecording) {
+      this.cancelActiveAudioRecording();
+    }
+
+    this._audioError = null;
+    try {
+      this._recordingTarget = targetKey;
+      this._recordingElapsedSec = 0;
+      await this._audioRecorder.start({
+        onTick: (sec) => {
+          this._recordingElapsedSec = sec;
+          const timerEl = this.rootEl?.querySelector(`[data-audio-timer="${targetKey}"]`);
+          if (timerEl) {
+            timerEl.textContent = formatAudioDuration(sec);
+          }
+        },
+        onAutoStop: () => {
+          if (this._recordingTarget === targetKey) {
+            this.handleToggleAudioRecording(targetKey);
+          }
+        }
+      });
+    } catch (err) {
+      this._recordingTarget = null;
+      this._recordingElapsedSec = 0;
+      this._audioError = {
+        target: targetKey,
+        message: err?.message || 'No se pudo iniciar la grabación de audio.'
+      };
+    }
+    this.render();
+  }
+
+  async hydrateSingleAudio(remotePath = null, localAudio = null, durationSec = 0) {
+    if (localAudio?.blob instanceof Blob && localAudio.blob.size > 0) {
+      return localAudio;
+    }
+    const cleanPath = remotePath || localAudio?.ruta_remota || '';
+    if (!cleanPath) return null;
+
+    let signedUrl = '';
+    if (pwaManager.getState().isOnline) {
+      try {
+        const signedRes = await supabase.storage.from('fotos').createSignedUrl(cleanPath, 3600);
+        const candidate = signedRes?.data?.signedUrl || '';
+        if (/^https?:\/\//i.test(candidate) && !candidate.includes('/object/public/')) {
+          signedUrl = candidate;
+        }
+      } catch {
+        // continuar sin URL si falla temporalmente
+      }
+    }
+
+    return {
+      blob: null,
+      signedUrl,
+      ruta_remota: cleanPath,
+      mime_type: localAudio?.mime_type || 'audio/webm',
+      peso_bytes: localAudio?.peso_bytes || 0,
+      duracion_seg: Number(durationSec || localAudio?.duracion_seg || 0)
+    };
+  }
+
+  renderInlineAudioPreview(audioItem, { removeId = '', removeDataAttr = '', disabled = false } = {}) {
+    if (!audioItem) return '';
+    const audioUrl = this.getAudioDisplayUrl(audioItem);
+    const durLabel = audioItem.duracion_seg ? formatAudioDuration(audioItem.duracion_seg) : '';
+    const sizeLabel = audioItem.peso_bytes ? formatBytes(audioItem.peso_bytes) : 'Nube';
+    return `
+      <div class="audio-inline-bar">
+        <div class="audio-inline-meta">
+          <strong>🎙️ Nota de voz${durLabel ? ` (${durLabel})` : ''}</strong>
+          <span>${this.escapeHtml(sizeLabel)}</span>
+        </div>
+        ${
+          audioUrl
+            ? `<audio controls preload="metadata" src="${audioUrl}" class="audio-inline-player"${
+                audioItem.ruta_remota ? ` data-remote-path="${this.escapeHtml(audioItem.ruta_remota)}"` : ''
+              }></audio>`
+            : `<span style="font-size:0.8rem; color:var(--text-muted);">Audio guardado en la nube</span>`
+        }
+        <button
+          type="button"
+          class="btn-mine btn-sm-mine btn-danger"
+          ${removeId ? `id="${removeId}"` : ''}
+          ${removeDataAttr}
+          ${disabled ? 'disabled' : ''}
+        >
+          ✕ Quitar Audio
+        </button>
+      </div>
+    `;
+  }
+
+  renderTableAudioPill(audioItem) {
+    if (!audioItem) return '';
+    const audioUrl = this.getAudioDisplayUrl(audioItem);
+    if (!audioUrl && !audioItem.ruta_remota) return '';
+    const durLabel = audioItem.duracion_seg ? ` (${formatAudioDuration(audioItem.duracion_seg)})` : '';
+    return `
+      <div class="table-audio-pill">
+        <span class="table-audio-label">🎙️ Audio${durLabel}</span>
+        <audio
+          controls
+          preload="metadata"
+          src="${audioUrl}"
+          class="table-audio-player"
+          ${audioItem.ruta_remota ? `data-remote-path="${this.escapeHtml(audioItem.ruta_remota)}"` : ''}
+        ></audio>
+      </div>
+    `;
   }
 
   isSegLevantada(seg) {
@@ -261,13 +440,23 @@ export class CapturaReporteView {
           ? matchedLocal.fotos_locales
           : [];
         const segPaths = Array.isArray(seg.fotos) ? seg.fotos : [];
-        const segFotosLocales = await this.hydratePhotoList(segPaths, localFotos);
+        const [segFotosLocales, segAudioLocal] = await Promise.all([
+          this.hydratePhotoList(segPaths, localFotos),
+          this.hydrateSingleAudio(
+            seg.audio || matchedLocal?.audio || null,
+            matchedLocal?.audio_local || null,
+            seg.audio_duracion_seg || matchedLocal?.audio_duracion_seg || 0
+          )
+        ]);
 
         return {
           ...matchedLocal,
           ...seg,
           fotos_locales: segFotosLocales,
-          video_local: matchedLocal?.video_local || null
+          video_local: matchedLocal?.video_local || null,
+          audio_local: segAudioLocal,
+          audio: seg.audio || segAudioLocal?.ruta_remota || null,
+          audio_duracion_seg: seg.audio_duracion_seg || segAudioLocal?.duracion_seg || 0
         };
       })
     );
@@ -337,19 +526,30 @@ export class CapturaReporteView {
                 const remotePaths = Array.isArray(rem.fotos)
                   ? rem.fotos
                   : existingLoc.fotos_rutas || [];
-                const [hydratedPhotos, mergedSegs] = await Promise.all([
+                const { videoPath: remVideoPath, audioPath: remAudioPath, audioDurationSec } =
+                  unpackVideoAudioField(rem.video);
+                const [hydratedPhotos, hydratedAudio, mergedSegs] = await Promise.all([
                   this.hydratePhotoList(
                     remotePaths,
                     existingLoc.fotos_locales || [],
                     rem.calidad_compresion || existingLoc.calidad_compresion
+                  ),
+                  this.hydrateSingleAudio(
+                    remAudioPath || existingLoc.audio_ruta || null,
+                    existingLoc.audio_local || null,
+                    audioDurationSec || existingLoc.audio_local?.duracion_seg || 0
                   ),
                   this.hydrateRemoteSeguimientos(rem.seguimientos, existingLoc.seguimientos)
                 ]);
                 mergedMap.set(rem.id, {
                   ...existingLoc,
                   ...rem,
+                  video: remVideoPath,
+                  video_ruta: remVideoPath || existingLoc.video_ruta || null,
                   fotos_locales: hydratedPhotos,
                   video_local: existingLoc.video_local || null,
+                  audio_local: hydratedAudio,
+                  audio_ruta: remAudioPath || hydratedAudio?.ruta_remota || null,
                   fotos_rutas: remotePaths,
                   seguimientos:
                     mergedSegs.length > 0 ? mergedSegs : existingLoc.seguimientos || [],
@@ -359,17 +559,24 @@ export class CapturaReporteView {
               } else {
                 // Reporte creado en otro celular o PC: firmar URLs en paralelo (con caché en memoria)
                 const remotePaths = Array.isArray(rem.fotos) ? rem.fotos : [];
-                const [cloudPhotos, cloudSegs] = await Promise.all([
+                const { videoPath: remVideoPath, audioPath: remAudioPath, audioDurationSec } =
+                  unpackVideoAudioField(rem.video);
+                const [cloudPhotos, cloudAudio, cloudSegs] = await Promise.all([
                   this.hydratePhotoList(remotePaths, [], rem.calidad_compresion),
+                  this.hydrateSingleAudio(remAudioPath, null, audioDurationSec),
                   this.hydrateRemoteSeguimientos(rem.seguimientos, [])
                 ]);
 
                 mergedMap.set(rem.id, {
                   ...rem,
+                  video: remVideoPath,
+                  video_ruta: remVideoPath,
                   es_nuevo_codigo: Boolean(rem.fuera_catalogo),
                   fotos_locales: cloudPhotos,
                   fotos_rutas: remotePaths,
                   video_local: null,
+                  audio_local: cloudAudio,
+                  audio_ruta: remAudioPath,
                   seguimientos: cloudSegs,
                   estado: 'sincronizado',
                   sincronizado_en_nube_real: true,
@@ -596,17 +803,27 @@ export class CapturaReporteView {
       estado_seguimiento: 'Sigue observación',
       comentario: '',
       fotos_locales: [],
-      video_local: null
+      video_local: null,
+      audio_local: null
     });
     this.render();
   }
 
   removeExtraObservationSlot(idx) {
+    if (this._recordingTarget === `extra:${idx}`) {
+      this.cancelActiveAudioRecording();
+    }
     this.form.observaciones_adicionales.splice(idx, 1);
     this.render();
   }
 
   async handleSaveReport() {
+    if (
+      this._audioRecorder?.isRecording &&
+      (this._recordingTarget === 'main' || String(this._recordingTarget || '').startsWith('extra:'))
+    ) {
+      await this.handleToggleAudioRecording(this._recordingTarget);
+    }
     // Validaciones obligatorias (Escenario P4)
     const codigo = normalizeEquipmentCode(this.form.codigo_equipo);
     if (!codigo) {
@@ -649,14 +866,14 @@ export class CapturaReporteView {
     const observacionesIndependientes = [];
 
     for (const extra of this.form.observaciones_adicionales) {
-      if (!extra.comentario.trim() && (extra.fotos_locales.length > 0 || extra.video_local)) {
+      if (!extra.comentario.trim() && (extra.fotos_locales.length > 0 || extra.video_local || extra.audio_local)) {
         this.setBanner(
           'error',
-          'Cada observación/seguimiento adicional con fotos requiere un comentario obligatorio; caso contrario no se guardará.'
+          'Cada observación/seguimiento adicional con multimedia requiere un comentario obligatorio; caso contrario no se guardará.'
         );
         return;
       }
-      if (!extra.comentario.trim() && extra.fotos_locales.length === 0 && !extra.video_local) {
+      if (!extra.comentario.trim() && extra.fotos_locales.length === 0 && !extra.video_local && !extra.audio_local) {
         continue;
       }
       if (extra.modo === 'independiente') {
@@ -668,7 +885,10 @@ export class CapturaReporteView {
           estado_seguimiento: extra.estado_seguimiento || 'Sigue observación',
           comentario: extra.comentario.trim() || 'Seguimiento registrado en campo.',
           fotos_locales: extra.fotos_locales,
-          video_local: extra.video_local
+          video_local: extra.video_local,
+          audio_local: extra.audio_local || null,
+          audio: null,
+          audio_duracion_seg: extra.audio_local?.duracion_seg || 0
         });
       }
     }
@@ -684,9 +904,11 @@ export class CapturaReporteView {
       calidad_compresion: this.form.calidad_compresion,
       fotos_locales: this.form.fotos_locales,
       video_local: this.form.video_local,
+      audio_local: this.form.audio_local || null,
       seguimientos: seguimientosIntegrados,
       fotos_rutas: [],
       video_ruta: null,
+      audio_ruta: null,
       estado: 'pendiente',
       ultimo_error: null,
       intentos_sync: 0,
@@ -712,9 +934,11 @@ export class CapturaReporteView {
         calidad_compresion: this.form.calidad_compresion,
         fotos_locales: fotosInd,
         video_local: ind.video_local,
+        audio_local: ind.audio_local || null,
         seguimientos: [],
         fotos_rutas: [],
         video_ruta: null,
+        audio_ruta: null,
         estado: 'pendiente',
         ultimo_error: null,
         intentos_sync: 0,
@@ -731,6 +955,7 @@ export class CapturaReporteView {
     this.obsValidationError = null;
     this.form.fotos_locales = [];
     this.form.video_local = null;
+    this.form.audio_local = null;
     this.form.observaciones_adicionales = [];
     this.form.fecha = getFechaHoyPeru();
 
@@ -791,6 +1016,9 @@ export class CapturaReporteView {
     if (!this.followupModal) return;
     if (this.followupModal.isSaving || this.followupModal.isUploadingPhotos) return;
 
+    if (this._audioRecorder?.isRecording && this._recordingTarget === 'followup') {
+      await this.handleToggleAudioRecording('followup');
+    }
     const {
       reporteId,
       editSegIndex = null,
@@ -799,6 +1027,7 @@ export class CapturaReporteView {
       comentario,
       fotos_locales,
       video_local,
+      audio_local = null,
       mode
     } = this.followupModal;
     const isEditMode = editSegIndex !== null && editSegIndex !== undefined;
@@ -853,7 +1082,10 @@ export class CapturaReporteView {
           comentario: comentario.trim(),
           fotos_locales: nextFotosLocales,
           fotos: updatedFotosRutas,
-          video_local: video_local !== undefined ? video_local : prevSeg.video_local || null
+          video_local: video_local !== undefined ? video_local : prevSeg.video_local || null,
+          audio_local: audio_local || null,
+          audio: audio_local?.ruta_remota || null,
+          audio_duracion_seg: audio_local?.duracion_seg || 0
         };
       } else {
         reporte.seguimientos.push({
@@ -862,7 +1094,10 @@ export class CapturaReporteView {
           estado_seguimiento: estado_seguimiento || 'Sigue observación',
           comentario: comentario.trim(),
           fotos_locales: nextFotosLocales,
-          video_local: video_local || null
+          video_local: video_local || null,
+          audio_local: audio_local || null,
+          audio: audio_local?.ruta_remota || null,
+          audio_duracion_seg: audio_local?.duracion_seg || 0
         });
       }
 
@@ -1008,9 +1243,20 @@ export class CapturaReporteView {
   async handleSaveEditReport() {
     if (!this.editReportModal) return;
     if (this.editReportModal.isSaving || this.editReportModal.isUploadingPhotos) return;
+    if (this._audioRecorder?.isRecording && this._recordingTarget === 'edit') {
+      await this.handleToggleAudioRecording('edit');
+    }
 
-    const { reporteId, codigo_equipo, fecha, tipo, prioridad, observacion, fotos_locales } =
-      this.editReportModal;
+    const {
+      reporteId,
+      codigo_equipo,
+      fecha,
+      tipo,
+      prioridad,
+      observacion,
+      fotos_locales,
+      audio_local = null
+    } = this.editReportModal;
 
     if (!observacion.trim()) {
       this.editReportModal.validationError =
@@ -1050,6 +1296,8 @@ export class CapturaReporteView {
       if (Array.isArray(reporte.fotos)) {
         reporte.fotos = [...reporte.fotos_rutas];
       }
+      reporte.audio_local = audio_local || null;
+      reporte.audio_ruta = audio_local?.ruta_remota || null;
 
       reporte.estado = 'pendiente';
       reporte.sincronizado_en_nube_real = false;
@@ -1439,10 +1687,10 @@ export class CapturaReporteView {
             </div>
           </div>
 
-          <!-- Captura Multimedia Inicial (1 a 5 fotos + 1 video corto opcional) -->
+          <!-- Captura Multimedia Inicial (1 a 5 fotos + 1 video corto opcional + 1 audio opcional) -->
           <div class="media-capture-box">
             <div class="field-label" style="margin-bottom: 0.65rem;">
-              <span>📸 Multimedia Inicial del Reporte: Fotos (${this.form.fotos_locales.length} / 5 obligatorias) y Video Opcional (${this.form.video_local ? '1 / 1' : '0 / 1'})</span>
+              <span>📸 Multimedia Inicial del Reporte: Fotos (${this.form.fotos_locales.length} / 5 obligatorias), Video Opcional (${this.form.video_local ? '1 / 1' : '0 / 1'}) y Audio Opcional (${this.form.audio_local ? '1 / 1' : '0 / 1'})</span>
               ${this.isCompressing ? `<span style="color:var(--accent-amber)">⏳ Comprimiendo imagen...</span>` : ''}
             </div>
 
@@ -1480,6 +1728,21 @@ export class CapturaReporteView {
 
               <button
                 type="button"
+                class="btn-mine btn-record-audio${this._recordingTarget === 'main' ? ' is-recording' : ''}"
+                id="btn-record-audio-main"
+                title="Grabar una nota de voz opcional para esta observación"
+              >
+                ${
+                  this._recordingTarget === 'main'
+                    ? `⏹️ Detener (<span data-audio-timer="main">${formatAudioDuration(this._recordingElapsedSec)}</span>)`
+                    : this.form.audio_local
+                      ? '🎙️ Regrabar Audio'
+                      : '🎙️ Grabar Audio'
+                }
+              </button>
+
+              <button
+                type="button"
                 class="btn-mine btn-sm-mine"
                 id="btn-sim-photo-main"
                 ${this.form.fotos_locales.length >= 5 ? 'disabled' : ''}
@@ -1488,6 +1751,14 @@ export class CapturaReporteView {
                 🧪 Generar Foto Placa de Prueba
               </button>
             </div>
+
+            ${
+              this._audioError?.target === 'main'
+                ? `<div class="inline-field-error" role="alert" style="margin-top:0.5rem;">⚠️ ${this.escapeHtml(this._audioError.message)}</div>`
+                : ''
+            }
+
+            ${this.renderInlineAudioPreview(this.form.audio_local, { removeId: 'btn-remove-main-audio' })}
 
             <!-- Vista previa de las 1 a 5 fotos y video opcional -->
             ${
@@ -1627,10 +1898,31 @@ export class CapturaReporteView {
                       <button type="button" class="btn-mine btn-sm-mine btn-secondary" data-extra-att-btn="${idx}">
                         📎 Adjuntar Foto Seg.
                       </button>
+                      <button
+                        type="button"
+                        class="btn-mine btn-sm-mine btn-record-audio${this._recordingTarget === `extra:${idx}` ? ' is-recording' : ''}"
+                        data-extra-audio-btn="${idx}"
+                      >
+                        ${
+                          this._recordingTarget === `extra:${idx}`
+                            ? `⏹️ Detener (<span data-audio-timer="extra:${idx}">${formatAudioDuration(this._recordingElapsedSec)}</span>)`
+                            : extra.audio_local
+                              ? '🎙️ Regrabar Audio'
+                              : '🎙️ Grabar Audio'
+                        }
+                      </button>
                       <button type="button" class="btn-mine btn-sm-mine" data-extra-sim-btn="${idx}">
                         🧪 Foto Placa Seg.
                       </button>
                     </div>
+
+                    ${
+                      this._audioError?.target === `extra:${idx}`
+                        ? `<div class="inline-field-error" role="alert" style="margin-top:0.45rem;">⚠️ ${this.escapeHtml(this._audioError.message)}</div>`
+                        : ''
+                    }
+
+                    ${this.renderInlineAudioPreview(extra.audio_local, { removeDataAttr: `data-remove-extra-audio="${idx}"` })}
 
                     ${
                       extra.fotos_locales.length > 0
@@ -1923,6 +2215,7 @@ export class CapturaReporteView {
                 📌 Observación Principal
               </div>
               <div style="font-size:0.92rem;">${this.escapeHtml(rep.observacion)}</div>
+              ${this.renderTableAudioPill(rep.audio_local)}
             </div>
             <div class="obs-actions-row">
               <div class="obs-actions-left">
@@ -2105,6 +2398,7 @@ export class CapturaReporteView {
               <div style="font-size:0.9rem; margin-top:0.2rem;">
                 ${this.escapeHtml(seg.comentario)}
               </div>
+              ${this.renderTableAudioPill(seg.audio_local)}
             </div>
             <div class="obs-actions-row">
               <span style="font-size:0.73rem; color:var(--text-muted);">
@@ -2692,6 +2986,21 @@ export class CapturaReporteView {
                 </button>
                 <button
                   type="button"
+                  class="btn-mine btn-sm-mine btn-record-audio${this._recordingTarget === 'followup' ? ' is-recording' : ''}"
+                  id="btn-modal-seg-audio"
+                  title="Grabar una nota de voz opcional para este seguimiento"
+                  ${isBusy ? 'disabled' : ''}
+                >
+                  ${
+                    this._recordingTarget === 'followup'
+                      ? `⏹️ Detener (<span data-audio-timer="followup">${formatAudioDuration(this._recordingElapsedSec)}</span>)`
+                      : m.audio_local
+                        ? '🎙️ Regrabar Audio'
+                        : '🎙️ Grabar Audio'
+                  }
+                </button>
+                <button
+                  type="button"
                   class="btn-mine btn-sm-mine"
                   id="btn-modal-seg-sim"
                   ${photoCount >= 5 || isBusy ? 'disabled' : ''}
@@ -2703,6 +3012,12 @@ export class CapturaReporteView {
                 ${thumbsHtml}${uploadingCardHtml}
               </div>
             </div>
+            ${
+              this._audioError?.target === 'followup'
+                ? `<div class="inline-field-error" role="alert" style="margin-top:0.5rem;">⚠️ ${this.escapeHtml(this._audioError.message)}</div>`
+                : ''
+            }
+            ${this.renderInlineAudioPreview(m.audio_local, { removeId: 'btn-remove-modal-seg-audio', disabled: isBusy })}
           </div>
 
           <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-top:1rem;">
@@ -2945,11 +3260,32 @@ export class CapturaReporteView {
                 >
                   ${isUploading ? '⏳ Procesando...' : '📷 / 📎 Agregar Foto'}
                 </button>
+                <button
+                  type="button"
+                  class="btn-mine btn-sm-mine btn-record-audio${this._recordingTarget === 'edit' ? ' is-recording' : ''}"
+                  id="btn-edit-audio"
+                  title="Grabar una nota de voz opcional para esta observación"
+                  ${isBusy ? 'disabled' : ''}
+                >
+                  ${
+                    this._recordingTarget === 'edit'
+                      ? `⏹️ Detener (<span data-audio-timer="edit">${formatAudioDuration(this._recordingElapsedSec)}</span>)`
+                      : m.audio_local
+                        ? '🎙️ Regrabar Audio'
+                        : '🎙️ Grabar Audio'
+                  }
+                </button>
               </div>
               <div class="followup-thumbs-inline" aria-live="polite">
                 ${thumbsHtml}${uploadingCardHtml}
               </div>
             </div>
+            ${
+              this._audioError?.target === 'edit'
+                ? `<div class="inline-field-error" role="alert" style="margin-top:0.5rem;">⚠️ ${this.escapeHtml(this._audioError.message)}</div>`
+                : ''
+            }
+            ${this.renderInlineAudioPreview(m.audio_local, { removeId: 'btn-remove-edit-audio', disabled: isBusy })}
           </div>
 
           <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-top:1rem; flex-wrap:wrap;">
@@ -3271,6 +3607,9 @@ export class CapturaReporteView {
     this.rootEl.querySelector('#btn-camera-main')?.addEventListener('click', () => fileCamMain?.click());
     this.rootEl.querySelector('#btn-attach-main')?.addEventListener('click', () => fileAttMain?.click());
     this.rootEl.querySelector('#btn-video-main')?.addEventListener('click', () => fileVidMain?.click());
+    this.rootEl.querySelector('#btn-record-audio-main')?.addEventListener('click', () => {
+      this.handleToggleAudioRecording('main');
+    });
 
     fileCamMain?.addEventListener('change', (e) => this.handleAddPhotos(e.target.files, null));
     fileAttMain?.addEventListener('change', (e) => this.handleAddPhotos(e.target.files, null));
@@ -3331,6 +3670,11 @@ export class CapturaReporteView {
 
     this.rootEl.querySelector('#btn-remove-main-video')?.addEventListener('click', () => {
       this.form.video_local = null;
+      this.render();
+    });
+
+    this.rootEl.querySelector('#btn-remove-main-audio')?.addEventListener('click', () => {
+      this.form.audio_local = null;
       this.render();
     });
 
@@ -3411,17 +3755,34 @@ export class CapturaReporteView {
       });
     });
 
+    this.rootEl.querySelectorAll('[data-extra-audio-btn]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.getAttribute('data-extra-audio-btn'));
+        this.handleToggleAudioRecording(`extra:${idx}`);
+      });
+    });
+
+    this.rootEl.querySelectorAll('[data-remove-extra-audio]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const idx = Number(btn.getAttribute('data-remove-extra-audio'));
+        if (this.form.observaciones_adicionales[idx]) {
+          this.form.observaciones_adicionales[idx].audio_local = null;
+          this.render();
+        }
+      });
+    });
+
     // Guardar Reporte
     this.rootEl
       .querySelector('#btn-guardar-reporte')
       ?.addEventListener('click', () => this.handleSaveReport());
 
     // Eventos en la Tabla Principal: Visor de fotos/videos, recuperación de miniaturas, Descarga en visor y Seguimiento (↳)
-    this.rootEl.querySelectorAll('img.table-thumb[data-remote-path]').forEach((imgEl) => {
-      imgEl.addEventListener('error', async () => {
-        if (imgEl.dataset.retrySigned === '1') return;
-        imgEl.dataset.retrySigned = '1';
-        const remotePath = imgEl.getAttribute('data-remote-path');
+    this.rootEl.querySelectorAll('img.table-thumb[data-remote-path], audio[data-remote-path]').forEach((mediaEl) => {
+      mediaEl.addEventListener('error', async () => {
+        if (mediaEl.dataset.retrySigned === '1') return;
+        mediaEl.dataset.retrySigned = '1';
+        const remotePath = mediaEl.getAttribute('data-remote-path');
         if (!remotePath || !pwaManager.getState().isOnline) return;
         try {
           const cleanPath = String(remotePath).replace(/^\/+/, '');
@@ -3429,7 +3790,7 @@ export class CapturaReporteView {
           const res = await supabase.storage.from('fotos').createSignedUrl(cleanPath, 3600);
           const freshUrl = res?.data?.signedUrl || '';
           if (/^https?:\/\//i.test(freshUrl) && !freshUrl.includes('/object/public/')) {
-            imgEl.src = freshUrl;
+            mediaEl.src = freshUrl;
           }
         } catch {
           // ignorar si no hay red
@@ -3512,6 +3873,7 @@ export class CapturaReporteView {
         comentario: '',
         fotos_locales: [],
         video_local: null,
+        audio_local: null,
         isUploadingPhotos: false,
         uploadingCount: 0,
         isSaving: false,
@@ -3553,6 +3915,7 @@ export class CapturaReporteView {
             ? seg.fotos_locales.map((f) => ({ ...f }))
             : [],
           video_local: seg.video_local ? { ...seg.video_local } : null,
+          audio_local: seg.audio_local ? { ...seg.audio_local } : null,
           isUploadingPhotos: false,
           uploadingCount: 0,
           isSaving: false,
@@ -3659,6 +4022,7 @@ export class CapturaReporteView {
           fotos_locales: Array.isArray(rep.fotos_locales)
             ? rep.fotos_locales.map((f) => ({ ...f }))
             : [],
+          audio_local: rep.audio_local ? { ...rep.audio_local } : null,
           isUploadingPhotos: false,
           uploadingCount: 0,
           isSaving: false,
@@ -3670,6 +4034,10 @@ export class CapturaReporteView {
 
     const closeEditModal = () => {
       if (this.editReportModal?.isSaving || this.editReportModal?.isUploadingPhotos) return;
+      if (this._recordingTarget === 'edit') {
+        this.cancelActiveAudioRecording();
+      }
+      this._audioError = null;
       this.editReportModal = null;
       this.render();
     };
@@ -3716,6 +4084,14 @@ export class CapturaReporteView {
     const editPhotoFile = this.rootEl.querySelector('#edit-photo-file');
     this.rootEl.querySelector('#btn-edit-add-photo')?.addEventListener('click', () => {
       editPhotoFile?.click();
+    });
+    this.rootEl.querySelector('#btn-edit-audio')?.addEventListener('click', () => {
+      this.handleToggleAudioRecording('edit');
+    });
+    this.rootEl.querySelector('#btn-remove-edit-audio')?.addEventListener('click', () => {
+      if (!this.editReportModal || this.editReportModal.isSaving || this.editReportModal.isUploadingPhotos) return;
+      this.editReportModal.audio_local = null;
+      this.render();
     });
     editPhotoFile?.addEventListener('change', async (e) => {
       if (!this.editReportModal || !e.target.files) return;
@@ -4065,6 +4441,10 @@ export class CapturaReporteView {
 
     this.rootEl.querySelector('#btn-close-followup')?.addEventListener('click', () => {
       if (this.followupModal?.isSaving || this.followupModal?.isUploadingPhotos) return;
+      if (this._recordingTarget === 'followup') {
+        this.cancelActiveAudioRecording();
+      }
+      this._audioError = null;
       this.followupModal = null;
       this.render();
     });
@@ -4099,6 +4479,16 @@ export class CapturaReporteView {
     const modalSegFile = this.rootEl.querySelector('#modal-seg-file');
     this.rootEl.querySelector('#btn-modal-seg-photo')?.addEventListener('click', () => {
       modalSegFile?.click();
+    });
+    this.rootEl.querySelector('#btn-modal-seg-audio')?.addEventListener('click', () => {
+      this.handleToggleAudioRecording('followup');
+    });
+    this.rootEl.querySelector('#btn-remove-modal-seg-audio')?.addEventListener('click', () => {
+      if (!this.followupModal || this.followupModal.isUploadingPhotos || this.followupModal.isSaving) {
+        return;
+      }
+      this.followupModal.audio_local = null;
+      this.render();
     });
     modalSegFile?.addEventListener('change', async (e) => {
       if (!this.followupModal || !e.target.files) return;

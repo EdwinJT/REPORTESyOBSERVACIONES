@@ -82,6 +82,10 @@ export function calculateReportMediaMetrics(reporte) {
     videosBytes += reporte.video_local.peso_bytes || reporte.video_local.blob?.size || 0;
   }
 
+  if (reporte?.audio_local) {
+    videosBytes += reporte.audio_local.peso_bytes || reporte.audio_local.blob?.size || 0;
+  }
+
   for (const seg of seguimientos) {
     const segFotos = Array.isArray(seg.fotos_locales) ? seg.fotos_locales : [];
     for (const sf of segFotos) {
@@ -94,6 +98,9 @@ export function calculateReportMediaMetrics(reporte) {
     if (seg.video_local) {
       videosCount += 1;
       videosBytes += seg.video_local.peso_bytes || seg.video_local.blob?.size || 0;
+    }
+    if (seg.audio_local) {
+      videosBytes += seg.audio_local.peso_bytes || seg.audio_local.blob?.size || 0;
     }
   }
 

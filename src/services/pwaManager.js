@@ -3,7 +3,7 @@
  * Precaché del App Shell y Estado de Red / Modo Avión (Escenario P5).
  */
 
-export const APP_SHELL_MANIFEST_VERSION = 'v1.9.47-fix-miniaturas-historial-pdf';
+export const APP_SHELL_MANIFEST_VERSION = 'v1.9.48-grabar-audio-opcional';
 export const APP_SHELL_CACHE_NAME = `mineria-pwa-appshell-${APP_SHELL_MANIFEST_VERSION}`;
 
 export const APP_SHELL_FILES = [
@@ -28,6 +28,7 @@ export const APP_SHELL_FILES = [
   { path: './src/services/excelExporter.js', category: 'Exportador Excel (M6)', desc: 'Generador OpenXML .xlsx de reportes filtrados sin URLs firmadas (P10)' },
   { path: './src/utils/datePeru.js', category: 'Zona Horaria Lima', desc: 'Cálculo estricto America/Lima (UTC-5) sin desfase UTC' },
   { path: './src/utils/codeNormalizer.js', category: 'Normalizador', desc: 'Estandarización de códigos (ej. 793f 05 -> 793F-05)' },
+  { path: './src/utils/audioMedia.js', category: 'Grabador Audio Opcional', desc: 'Grabación de notas de voz y empaquetado multimedia retrocompatible' },
   { path: './src/components/CapturaReporte/CapturaReporte.js', category: 'Módulo 1 (UI)', desc: 'Captura Nuevo Reporte y Tabla Operativa' },
   { path: './src/components/MisReportes/MisReportes.js', category: 'Módulo 2 (UI)', desc: 'Pantalla Mis reportes y auditoría de pesos IndexedDB' },
   { path: './src/components/PwaBanner/PwaBanner.js', category: 'Módulo 3 (UI)', desc: 'Panel PWA Instalable, Modo Avión P5 y Guía iOS/Android' },

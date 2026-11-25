@@ -12,6 +12,7 @@
  */
 
 import { getFechaHoyPeru } from '../utils/datePeru.js';
+import { unpackVideoAudioField } from '../utils/audioMedia.js';
 
 export const EXCEL_COLUMNS = [
   { key: 'id', header: 'ID Reporte (UUID Dispositivo)', width: 38 },
@@ -80,7 +81,8 @@ export function mapUnifiedReportToExcelRow(rep) {
     (Array.isArray(rep.fotos_locales) ? rep.fotos_locales.length : 0) ||
     (Array.isArray(rep.fotos) ? rep.fotos.length : 0);
 
-  const rawVideoPath = rep.video_ruta || rep.video || rep.video_local?.ruta_remota || '';
+  const unpackedVideo = unpackVideoAudioField(rep.video);
+  const rawVideoPath = rep.video_ruta || unpackedVideo.videoPath || rep.video_local?.ruta_remota || '';
   const cleanVideoPath = rawVideoPath
     ? stripExpiringSignedUrl(rawVideoPath)
     : rep.video_local

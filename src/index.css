@@ -4404,3 +4404,127 @@ body.theme-night .m6-status-pill.is-resolved {
     padding: 0.65rem;
   }
 }
+
+/* ==========================================================================
+   GRABACIÓN Y REPRODUCCIÓN DE AUDIO OPCIONAL (NOTAS DE VOZ EN CAMPO)
+   ========================================================================== */
+
+.btn-mine.btn-record-audio {
+  background: #EFF6FF;
+  border-color: #1D4ED8;
+  color: #1E3A8A;
+  font-weight: 800;
+}
+
+.btn-mine.btn-record-audio:hover:not(:disabled) {
+  background: #DBEAFE;
+  border-color: #1E40AF;
+  color: #172554;
+}
+
+body.theme-night .btn-mine.btn-record-audio {
+  background: #172554;
+  border-color: #60A5FA;
+  color: #DBEAFE;
+}
+
+body.theme-night .btn-mine.btn-record-audio:hover:not(:disabled) {
+  background: #1E3A8A;
+  color: #FFFFFF;
+}
+
+.btn-mine.btn-record-audio.is-recording {
+  background: #DC2626;
+  border-color: #991B1B;
+  color: #FFFFFF;
+  animation: audioRecPulse 1.2s ease-in-out infinite;
+}
+
+.btn-mine.btn-record-audio.is-recording:hover:not(:disabled) {
+  background: #B91C1C;
+  border-color: #7F1D1D;
+  color: #FFFFFF;
+}
+
+@keyframes audioRecPulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(220, 38, 38, 0);
+  }
+}
+
+.audio-inline-bar {
+  margin-top: 0.6rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: 8px;
+  border: 1.5px solid #93C5FD;
+  background: #F8FAFC;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+body.theme-night .audio-inline-bar {
+  background: #10243A;
+  border-color: #3B628E;
+}
+
+.audio-inline-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.84rem;
+  color: var(--text-main);
+  white-space: nowrap;
+}
+
+.audio-inline-meta span {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.audio-inline-player {
+  height: 36px;
+  flex: 1 1 200px;
+  min-width: 180px;
+  max-width: 100%;
+}
+
+.table-audio-pill {
+  margin-top: 0.45rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 8px;
+  border: 1px solid #CBD5E1;
+  background: #F8FAFC;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+body.theme-night .table-audio-pill {
+  background: #13263B;
+  border-color: #3B628E;
+}
+
+.table-audio-label {
+  font-size: 0.78rem;
+  font-weight: 800;
+  color: #002B5C;
+  white-space: nowrap;
+}
+
+body.theme-night .table-audio-label {
+  color: #93C5FD;
+}
+
+.table-audio-player {
+  height: 32px;
+  flex: 1 1 180px;
+  min-width: 160px;
+  max-width: 320px;
+}

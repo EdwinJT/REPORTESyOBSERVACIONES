@@ -18,6 +18,11 @@ import { supabase } from '../config/supabaseClient.js';
 import { authService } from './authService.js';
 import { pwaManager } from './pwaManager.js';
 import { connectivityService, DEFAULT_PING_TIMEOUT_MS } from './connectivity.js';
+import {
+  packVideoAudioField,
+  unpackVideoAudioField,
+  getAudioExtensionFromMime
+} from '../utils/audioMedia.js';
 
 // Escalera oficial de Exponential Backoff (M5): 30 s -> 2 min -> 10 min
 export const BACKOFF_SCHEDULE = [
@@ -524,8 +529,9 @@ class SyncQueueService {
             uploadedPhotoPaths.push(storagePath);
           }
 
-          // Subida de video opcional si existe
-          let uploadedVideoPath = rep.video_ruta || rep.video || null;
+          // Subida de video y audio opcionales si existen
+          const unpackedMedia = unpackVideoAudioField(rep.video);
+          let uploadedVideoPath = rep.video_ruta || unpackedMedia.videoPath || null;
           if (rep.video_local && rep.video_local.blob) {
             const ext = (rep.video_local.mime_type || '').includes('webm') ? 'webm' : 'mp4';
             const videoPath = `${userId}/${rep.id}/video.${ext}`;
@@ -550,6 +556,41 @@ class SyncQueueService {
             }
             rep.video_local.ruta_remota = videoPath;
             uploadedVideoPath = videoPath;
+          }
+
+          let uploadedAudioPath =
+            rep.audio_local === null
+              ? null
+              : rep.audio_local?.ruta_remota || rep.audio_ruta || unpackedMedia.audioPath || null;
+          let uploadedAudioDuration =
+            rep.audio_local === null
+              ? 0
+              : rep.audio_local?.duracion_seg || unpackedMedia.audioDurationSec || 0;
+          if (rep.audio_local?.blob instanceof Blob && rep.audio_local.blob.size > 0) {
+            const audioExt = getAudioExtensionFromMime(rep.audio_local.mime_type || rep.audio_local.blob.type);
+            const audioPath = `${userId}/${rep.id}/audio.${audioExt}`;
+
+            this.currentStepDetail = `[${idx + 1}/${candidates.length}] Fase 1 (Storage): Subiendo audio opcional -> fotos/${audioPath} (upsert: true)`;
+            this.notify();
+
+            if (perFileDelayMs > 0) {
+              await new Promise((r) => setTimeout(r, perFileDelayMs));
+            }
+            this._assertSignalStillActive(`la subida del audio de ${rep.codigo_equipo}`);
+
+            const audioRes = await supabase.storage.from('fotos').upload(audioPath, rep.audio_local.blob, {
+              upsert: true,
+              contentType: rep.audio_local.mime_type || rep.audio_local.blob.type || 'audio/webm',
+              sizeBytes: rep.audio_local.peso_bytes || rep.audio_local.blob.size || 64000,
+              timeoutMs: 15000
+            });
+
+            if (audioRes.error) {
+              throw new Error(audioRes.error.message || 'Error al subir el audio opcional a Storage.');
+            }
+            rep.audio_local.ruta_remota = audioPath;
+            uploadedAudioPath = audioPath;
+            uploadedAudioDuration = rep.audio_local.duracion_seg || uploadedAudioDuration;
           }
 
           // Subida de multimedia de seguimientos (↳) si existen
@@ -584,13 +625,46 @@ class SyncQueueService {
                 }
               }
 
-              seguimientosRemotos.push({
+              let segAudioPath =
+                seg.audio_local === null
+                  ? null
+                  : seg.audio_local?.ruta_remota || seg.audio || null;
+              let segAudioDur =
+                seg.audio_local === null
+                  ? 0
+                  : seg.audio_local?.duracion_seg || seg.audio_duracion_seg || 0;
+              if (seg.audio_local?.blob instanceof Blob && seg.audio_local.blob.size > 0) {
+                const segAudioExt = getAudioExtensionFromMime(
+                  seg.audio_local.mime_type || seg.audio_local.blob.type
+                );
+                const nextSegAudioPath = `${userId}/${rep.id}/seg_${sIdx + 1}_audio.${segAudioExt}`;
+                this._assertSignalStillActive(`la subida de audio de seguimiento de ${rep.codigo_equipo}`);
+                const segAudioUp = await supabase.storage.from('fotos').upload(nextSegAudioPath, seg.audio_local.blob, {
+                  upsert: true,
+                  contentType: seg.audio_local.mime_type || seg.audio_local.blob.type || 'audio/webm',
+                  sizeBytes: seg.audio_local.peso_bytes || seg.audio_local.blob.size || 64000,
+                  timeoutMs: 15000
+                });
+                if (segAudioUp.error) {
+                  throw new Error(segAudioUp.error.message || 'Error al subir audio de seguimiento.');
+                }
+                seg.audio_local.ruta_remota = nextSegAudioPath;
+                segAudioPath = nextSegAudioPath;
+                segAudioDur = seg.audio_local.duracion_seg || segAudioDur;
+              }
+
+              const remoteSegObj = {
                 id: seg.id,
                 fecha: seg.fecha,
                 estado_seguimiento: seg.estado_seguimiento,
                 comentario: seg.comentario,
                 fotos: segFotosRutas
-              });
+              };
+              if (segAudioPath) {
+                remoteSegObj.audio = segAudioPath;
+                remoteSegObj.audio_duracion_seg = segAudioDur;
+              }
+              seguimientosRemotos.push(remoteSegObj);
             }
           }
 
@@ -602,11 +676,17 @@ class SyncQueueService {
 
           // ===================================================================
           // PASO B (FASE 2): UPSERT DEL REGISTRO EN POSTGRES (public.reportes)
-          // Solo se ejecuta si el 100 % de las fotos y video se subieron sin error.
+          // Solo se ejecuta si el 100 % de las fotos, video y audio se subieron sin error.
           // ===================================================================
           this.currentPhase = 'PHASE_2_POSTGRES';
           this.currentStepDetail = `[${idx + 1}/${candidates.length}] Fase 2 (Postgres): Ejecutando UPSERT en public.reportes (onConflict: 'id' -> ${rep.id.slice(0, 8)})...`;
           this.notify();
+
+          const packedVideoField = packVideoAudioField(
+            uploadedVideoPath,
+            uploadedAudioPath,
+            uploadedAudioDuration
+          );
 
           const postgresPayload = {
             id: rep.id, // UUID generado en el dispositivo (idempotencia garantizada)
@@ -619,7 +699,7 @@ class SyncQueueService {
             observacion: rep.observacion || '',
             calidad_compresion: rep.calidad_compresion || 'estandar',
             fotos: uploadedPhotoPaths,
-            video: uploadedVideoPath,
+            video: packedVideoField,
             seguimientos: seguimientosRemotos,
             creado_por: userId,
             creado_en: rep.creado_en,
@@ -647,6 +727,7 @@ class SyncQueueService {
           rep.sincronizado_en_nube_real = upsertedRow?.cloud_mode === 'supabase-cloud-postgres';
           rep.fotos_rutas = uploadedPhotoPaths;
           rep.video_ruta = uploadedVideoPath;
+          rep.audio_ruta = uploadedAudioPath;
           rep.ultimo_error = null;
           rep.proximo_reintento_en = null;
           rep.creado_por = userId;

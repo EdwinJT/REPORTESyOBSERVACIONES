@@ -29,6 +29,10 @@ import {
   exportFilteredReportsToExcel,
   buildExcelExportPayload
 } from '../../services/excelExporter.js';
+import {
+  unpackVideoAudioField,
+  formatAudioDuration
+} from '../../utils/audioMedia.js';
 import { getFechaHoyPeru, getHoraActualPeru, formatFechaDDMMYYYY } from '../../utils/datePeru.js';
 import { normalizeEquipmentCode } from '../../utils/codeNormalizer.js';
 import { formatBytes } from '../../db/storageManager.js';
@@ -269,15 +273,21 @@ export class HistorialModuleView {
     // Luego fusionar o agregar los de Supabase Cloud (`public.reportes`)
     for (const rem of this.cloudReports) {
       const existingLocal = unifiedMap.get(rem.id);
+      const { videoPath: remVideoPath, audioPath: remAudioPath, audioDurationSec } =
+        unpackVideoAudioField(rem.video);
       if (existingLocal) {
         unifiedMap.set(rem.id, {
           ...existingLocal,
           ...rem,
+          video: remVideoPath,
           // Preservar blobs locales si existen en este dispositivo
           fotos_locales: existingLocal.fotos_locales || [],
           video_local: existingLocal.video_local || null,
+          audio_local: existingLocal.audio_local || null,
           fotos_rutas: Array.isArray(rem.fotos) ? rem.fotos : existingLocal.fotos_rutas || [],
-          video_ruta: rem.video || existingLocal.video_ruta || null,
+          video_ruta: remVideoPath || existingLocal.video_ruta || null,
+          audio_ruta: remAudioPath || existingLocal.audio_ruta || null,
+          audio_duracion_seg: audioDurationSec || existingLocal.audio_local?.duracion_seg || 0,
           estado: 'sincronizado',
           origen_unificado: 'local_y_nube',
           tiene_blobs_locales:
@@ -287,11 +297,15 @@ export class HistorialModuleView {
       } else {
         unifiedMap.set(rem.id, {
           ...rem,
+          video: remVideoPath,
           es_nuevo_codigo: Boolean(rem.fuera_catalogo),
           fotos_locales: [],
           video_local: null,
+          audio_local: null,
           fotos_rutas: Array.isArray(rem.fotos) ? rem.fotos : [],
-          video_ruta: rem.video || null,
+          video_ruta: remVideoPath || null,
+          audio_ruta: remAudioPath || null,
+          audio_duracion_seg: audioDurationSec || 0,
           estado: 'sincronizado',
           origen_unificado: 'solo_nube',
           tiene_blobs_locales: false,
@@ -521,13 +535,14 @@ export class HistorialModuleView {
 
     // Video opcional bajo demanda si existe
     let signedVideo = null;
-    const videoPath = rep.video_ruta || rep.video || rep.video_local?.ruta_remota || null;
+    const unpackedMedia = unpackVideoAudioField(rep.video);
+    const videoPath = rep.video_ruta || unpackedMedia.videoPath || rep.video_local?.ruta_remota || null;
     if (videoPath || rep.video_local) {
       const effectiveVidPath = videoPath || `local/${rep.id}/video.mp4`;
       const vidSignRes = await supabase.storage.from('fotos').createSignedUrl(effectiveVidPath, 3600);
       generatedUrlsCount++;
       let localVideoUrl = null;
-      if (rep.video_local?.blob) {
+      if (rep.video_local?.blob instanceof Blob && rep.video_local.blob.size > 0) {
         localVideoUrl = URL.createObjectURL(rep.video_local.blob);
         this.detailObjectUrls.push(localVideoUrl);
       }
@@ -539,10 +554,63 @@ export class HistorialModuleView {
       };
     }
 
+    // Audio opcional (inicial y de seguimientos) bajo demanda si existe
+    const signedAudios = [];
+    const resolveAudioSrc = async (label, localAudio, remotePath, durSec = 0) => {
+      let playSrc = '';
+      let signedUrl = '';
+      if (localAudio?.blob instanceof Blob && localAudio.blob.size > 0) {
+        playSrc = URL.createObjectURL(localAudio.blob);
+        this.detailObjectUrls.push(playSrc);
+      } else if (remotePath && pwaManager.getState().isOnline) {
+        const res = await supabase.storage.from('fotos').createSignedUrl(remotePath, 3600);
+        const candidate = res?.data?.signedUrl || '';
+        if (/^https?:\/\//i.test(candidate) && !candidate.includes('/object/public/')) {
+          signedUrl = candidate;
+          playSrc = candidate;
+          generatedUrlsCount++;
+        }
+      }
+      if (playSrc || remotePath) {
+        signedAudios.push({
+          label,
+          playSrc,
+          signedUrl,
+          storagePath: remotePath || localAudio?.ruta_remota || '',
+          duracion_seg: Number(durSec || localAudio?.duracion_seg || 0)
+        });
+      }
+    };
+
+    const mainAudioPath = rep.audio_ruta || unpackedMedia.audioPath || rep.audio_local?.ruta_remota || null;
+    if (mainAudioPath || rep.audio_local) {
+      await resolveAudioSrc(
+        'Observación Principal',
+        rep.audio_local,
+        mainAudioPath,
+        rep.audio_duracion_seg || unpackedMedia.audioDurationSec || 0
+      );
+    }
+
+    const repSegs = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
+    for (let si = 0; si < repSegs.length; si++) {
+      const seg = repSegs[si];
+      const segAudioPath = seg?.audio || seg?.audio_local?.ruta_remota || null;
+      if (segAudioPath || seg?.audio_local) {
+        await resolveAudioSrc(
+          `Seguimiento #${si + 1} (${formatFechaDDMMYYYY(seg.fecha)})`,
+          seg.audio_local,
+          segAudioPath,
+          seg.audio_duracion_seg || 0
+        );
+      }
+    }
+
     this.totalLazySignedUrlsSession += generatedUrlsCount;
     this.detailSignedMedia = {
       photos: signedPhotos,
       video: signedVideo,
+      audios: signedAudios,
       loadedAtIso: new Date().toISOString(),
       totalSignedUrlsGenerated: generatedUrlsCount
     };
@@ -1626,8 +1694,15 @@ export class HistorialModuleView {
                   (Array.isArray(rep.fotos) && rep.fotos.length) ||
                   (Array.isArray(rep.fotos_locales) && rep.fotos_locales.length) ||
                   1;
-                const hasVideo = Boolean(rep.video_ruta || rep.video || rep.video_local);
+                const unpacked = unpackVideoAudioField(rep.video);
+                const hasVideo = Boolean(rep.video_ruta || unpacked.videoPath || rep.video_local);
                 const seguimientos = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
+                const hasAudio = Boolean(
+                  rep.audio_ruta ||
+                    unpacked.audioPath ||
+                    rep.audio_local ||
+                    seguimientos.some((s) => s?.audio || s?.audio_local)
+                );
                 const isLev = this.isReportLevantada(rep);
                 const prioUpper = String(rep.prioridad || 'Media').toUpperCase();
                 const prioBadgeClass =
@@ -1669,7 +1744,7 @@ export class HistorialModuleView {
                         loading="lazy"
                       />
                       <span class="m6-evidence-count-badge">
-                        ${fotosCount} foto(s)${hasVideo ? ' + 🎥' : ''}
+                        ${fotosCount} foto(s)${hasVideo ? ' + 🎥' : ''}${hasAudio ? ' + 🎙️' : ''}
                       </span>
                     </button>
                   </td>
@@ -1734,8 +1809,15 @@ export class HistorialModuleView {
               (Array.isArray(rep.fotos) && rep.fotos.length) ||
               (Array.isArray(rep.fotos_locales) && rep.fotos_locales.length) ||
               1;
-            const hasVideo = Boolean(rep.video_ruta || rep.video || rep.video_local);
+            const unpacked = unpackVideoAudioField(rep.video);
+            const hasVideo = Boolean(rep.video_ruta || unpacked.videoPath || rep.video_local);
             const seguimientos = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
+            const hasAudio = Boolean(
+              rep.audio_ruta ||
+                unpacked.audioPath ||
+                rep.audio_local ||
+                seguimientos.some((s) => s?.audio || s?.audio_local)
+            );
             const isLev = this.isReportLevantada(rep);
             const prioUpper = String(rep.prioridad || 'Media').toUpperCase();
             const prioBadgeClass =
@@ -1799,7 +1881,7 @@ export class HistorialModuleView {
 
               <div class="m6-mobile-card-footer">
                 <div style="font-size:0.82rem; font-weight:800;">
-                  📷 ${fotosCount} foto(s) ${hasVideo ? '+ 🎥 1 video' : ''} <span class="tech-only-inline">• <span style="color:#0369a1;">Lazy Load</span></span>
+                  📷 ${fotosCount} foto(s) ${hasVideo ? '+ 🎥 1 video ' : ''}${hasAudio ? '+ 🎙️ audio ' : ''}<span class="tech-only-inline">• <span style="color:#0369a1;">Lazy Load</span></span>
                 </div>
                 <button
                   type="button"
@@ -2001,6 +2083,32 @@ export class HistorialModuleView {
                     )
                     .join('')}
                 </div>
+
+                ${
+                  Array.isArray(media.audios) && media.audios.length > 0
+                    ? `
+                  <div style="margin-top:0.8rem; display:flex; flex-direction:column; gap:0.5rem;">
+                    <strong style="font-size:0.94rem;">🎙️ Notas de Voz (${media.audios.length})</strong>
+                    ${media.audios
+                      .map(
+                        (au) => `
+                      <div class="table-audio-pill">
+                        <span class="table-audio-label">
+                          🎙️ ${this.escapeHtml(au.label)}${au.duracion_seg ? ` (${formatAudioDuration(au.duracion_seg)})` : ''}
+                        </span>
+                        ${
+                          au.playSrc
+                            ? `<audio controls preload="metadata" src="${this.escapeAttr(au.playSrc)}" class="table-audio-player"></audio>`
+                            : `<span style="font-size:0.8rem; color:var(--text-muted);">Audio disponible con conexión</span>`
+                        }
+                      </div>
+                    `
+                      )
+                      .join('')}
+                  </div>
+                `
+                    : ''
+                }
 
                 ${
                   media.video
