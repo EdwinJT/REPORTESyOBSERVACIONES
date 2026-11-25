@@ -5,7 +5,7 @@
  * abra en Modo Avión (Escenario P5) tras cerrarse completamente.
  */
 
-const CACHE_VERSION = 'v1.9.46-titulo-tabla-principal-observaciones';
+const CACHE_VERSION = 'v1.9.47-fix-miniaturas-historial-pdf';
 const APP_SHELL_CACHE = `mineria-pwa-appshell-${CACHE_VERSION}`;
 
 const PRECACHE_ASSETS = [

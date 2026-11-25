@@ -133,8 +133,11 @@ export class HistorialModuleView {
 
   async init() {
     const hoy = getFechaHoyPeru();
-    // Asegurar muestras de reportes enviados desde otros dispositivos del equipo en la nube para demostrar la vista combinada
-    supabase.ensureTeamCloudSamplesForM6(hoy);
+    const isPlaceholder = Boolean(supabase.getConfig?.().isPlaceholder);
+    // Solo generar muestras demo si no hay backend real de Supabase configurado
+    if (isPlaceholder) {
+      supabase.ensureTeamCloudSamplesForM6(hoy);
+    }
 
     await this.reloadUnifiedHistory(true);
 
@@ -236,7 +239,12 @@ export class HistorialModuleView {
     }
 
     this.localReports = filteredLocal;
-    this.cloudReports = rawCloud.filter((r) => !checkDeleted(r.id, r.observacion));
+    const isRealCloud = !supabase.getConfig?.().isPlaceholder;
+    this.cloudReports = rawCloud.filter((r) => {
+      if (checkDeleted(r.id, r.observacion)) return false;
+      if (isRealCloud && r?.from_remote_device === true) return false;
+      return true;
+    });
 
     // Sincronizar códigos de equipo creados en la nube con el catálogo local (M6 requisito 2)
     this.catalogSummary = await syncEquipmentsFromCloudReports(
@@ -704,21 +712,28 @@ export class HistorialModuleView {
     return authService.getState().userEmail || 'Supervisor de Guardia';
   }
 
+  getPrimaryStoragePath(rep) {
+    const photoPaths =
+      Array.isArray(rep?.fotos_rutas) && rep.fotos_rutas.length > 0
+        ? rep.fotos_rutas
+        : Array.isArray(rep?.fotos) && rep.fotos.length > 0
+          ? rep.fotos
+          : [];
+    if (photoPaths[0]) return photoPaths[0];
+    const localRoute = Array.isArray(rep?.fotos_locales) ? rep.fotos_locales[0]?.ruta_remota : '';
+    return localRoute || '';
+  }
+
   getImmediateThumbSrc(rep) {
     if (this.thumbUrlMap.has(rep.id)) {
       return this.thumbUrlMap.get(rep.id);
     }
     const localBlob = Array.isArray(rep?.fotos_locales) ? rep.fotos_locales[0]?.blob : null;
-    if (localBlob) {
+    if (localBlob instanceof Blob && localBlob.size > 0) {
       const objUrl = URL.createObjectURL(localBlob);
       this.objectUrls.push(objUrl);
       this.thumbUrlMap.set(rep.id, objUrl);
       return objUrl;
-    }
-    const existingSigned = Array.isArray(rep?.fotos_locales) ? rep.fotos_locales[0]?.signedUrl : '';
-    if (existingSigned) {
-      this.thumbUrlMap.set(rep.id, existingSigned);
-      return existingSigned;
     }
     const photoPaths =
       Array.isArray(rep?.fotos_rutas) && rep.fotos_rutas.length > 0
@@ -726,13 +741,14 @@ export class HistorialModuleView {
         : Array.isArray(rep?.fotos)
           ? rep.fotos
           : [];
+    const storagePath = this.getPrimaryStoragePath(rep);
     return buildCloudPhotoPreviewDataUri({
       codigoEquipo: rep.codigo_equipo,
       fecha: rep.fecha,
       hora: rep.hora_peru,
       photoNumber: 1,
       totalPhotos: Math.max(photoPaths.length, 1),
-      storagePath: photoPaths[0] || `${rep.creado_por || 'campo'}/${rep.id}/1.jpg`,
+      storagePath: storagePath || `${rep.creado_por || 'campo'}/${rep.id}/1.jpg`,
       calidad: rep.calidad_compresion
     });
   }
@@ -742,17 +758,11 @@ export class HistorialModuleView {
       return this.thumbUrlMap.get(rep.id);
     }
     const localBlob = Array.isArray(rep?.fotos_locales) ? rep.fotos_locales[0]?.blob : null;
-    if (localBlob) {
+    if (localBlob instanceof Blob && localBlob.size > 0) {
       const objUrl = URL.createObjectURL(localBlob);
       this.objectUrls.push(objUrl);
       this.thumbUrlMap.set(rep.id, objUrl);
       return objUrl;
-    }
-
-    const existingSigned = Array.isArray(rep?.fotos_locales) ? rep.fotos_locales[0]?.signedUrl : '';
-    if (existingSigned) {
-      this.thumbUrlMap.set(rep.id, existingSigned);
-      return existingSigned;
     }
 
     const photoPaths =
@@ -761,7 +771,7 @@ export class HistorialModuleView {
         : Array.isArray(rep?.fotos)
           ? rep.fotos
           : [];
-    const storagePath = photoPaths[0] || '';
+    const storagePath = this.getPrimaryStoragePath(rep);
 
     if (storagePath && pwaManager.getState().isOnline) {
       try {
@@ -787,6 +797,24 @@ export class HistorialModuleView {
       storagePath: storagePath || `${rep.creado_por || 'campo'}/${rep.id}/1.jpg`,
       calidad: rep.calidad_compresion
     });
+  }
+
+  async resolvePrintThumbSrc(rep) {
+    const localBlob = Array.isArray(rep?.fotos_locales) ? rep.fotos_locales[0]?.blob : null;
+    if (localBlob instanceof Blob && localBlob.size > 0) {
+      try {
+        const dataUri = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+          reader.onerror = () => reject(reader.error || new Error('FileReader error'));
+          reader.readAsDataURL(localBlob);
+        });
+        if (dataUri) return dataUri;
+      } catch {
+        // Continuar con resolución de URL remota si falla la conversión
+      }
+    }
+    return this.resolveReportPrimaryThumbSrc(rep);
   }
 
   async hydrateVisibleThumbnails(reports = []) {
@@ -834,7 +862,7 @@ export class HistorialModuleView {
     );
 
     const thumbSrcs = await Promise.all(
-      filtered.map((rep) => this.resolveReportPrimaryThumbSrc(rep))
+      filtered.map((rep) => this.resolvePrintThumbSrc(rep))
     );
 
     const hoyFormatted = formatFechaDDMMYYYY(getFechaHoyPeru());
@@ -2192,15 +2220,34 @@ export class HistorialModuleView {
       });
     });
 
-    // Respaldo si falla la carga de alguna miniatura (URL expirada / sin red)
+    // Respaldo si falla la carga de alguna miniatura (URL expirada / sin red): re-firmar una vez antes de usar SVG
     this.rootEl.querySelectorAll('img[data-m6-thumb-id]').forEach((imgEl) => {
-      imgEl.addEventListener('error', () => {
-        if (imgEl.dataset.fallbackApplied === '1') return;
-        imgEl.dataset.fallbackApplied = '1';
+      imgEl.addEventListener('error', async () => {
         const repId = imgEl.getAttribute('data-m6-thumb-id');
         if (repId) this.thumbUrlMap.delete(repId);
         const rep = this.unifiedReports.find((r) => r.id === repId);
         if (!rep) return;
+
+        const storagePath = this.getPrimaryStoragePath(rep);
+        if (imgEl.dataset.retrySigned !== '1' && storagePath && pwaManager.getState().isOnline) {
+          imgEl.dataset.retrySigned = '1';
+          try {
+            const cleanPath = String(storagePath).replace(/^\/+/, '');
+            supabase._signedUrlCache?.delete?.(`fotos/${cleanPath}`);
+            const signed = await supabase.storage.from('fotos').createSignedUrl(cleanPath, 3600);
+            const freshUrl = signed?.data?.signedUrl || '';
+            if (/^https?:\/\//i.test(freshUrl) && !freshUrl.includes('/object/public/')) {
+              this.thumbUrlMap.set(rep.id, freshUrl);
+              imgEl.src = freshUrl;
+              return;
+            }
+          } catch {
+            // Continuar al respaldo SVG
+          }
+        }
+
+        if (imgEl.dataset.fallbackApplied === '1') return;
+        imgEl.dataset.fallbackApplied = '1';
         const photoPaths =
           Array.isArray(rep?.fotos_rutas) && rep.fotos_rutas.length > 0
             ? rep.fotos_rutas
@@ -2213,7 +2260,7 @@ export class HistorialModuleView {
           hora: rep.hora_peru,
           photoNumber: 1,
           totalPhotos: Math.max(photoPaths.length, 1),
-          storagePath: photoPaths[0] || `${rep.creado_por || 'campo'}/${rep.id}/1.jpg`,
+          storagePath: storagePath || `${rep.creado_por || 'campo'}/${rep.id}/1.jpg`,
           calidad: rep.calidad_compresion
         });
       });
