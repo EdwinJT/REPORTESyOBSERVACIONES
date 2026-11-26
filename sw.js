@@ -5,7 +5,7 @@
  * abra en Modo Avión (Escenario P5) tras cerrarse completamente.
  */
 
-const CACHE_VERSION = 'v1.9.50-diseno-1-1-y-fotos-seguimientos';
+const CACHE_VERSION = 'v1.9.51-fondo-diseno-1-1-mas-contraste';
 const APP_SHELL_CACHE = `mineria-pwa-appshell-${CACHE_VERSION}`;
 
 const PRECACHE_ASSETS = [
