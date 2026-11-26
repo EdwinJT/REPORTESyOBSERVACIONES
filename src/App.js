@@ -35,6 +35,7 @@ import { SyncModuleView } from './components/SyncStatus/SyncStatus.js';
 import { HistorialModuleView } from './components/Historial/Historial.js';
 
 const VIEW_MODE_STORAGE_KEY = 'mineria_pwa_ui_view_mode_v1';
+const DESIGN_VERSION_STORAGE_KEY = 'mineria_pwa_ui_design_version_v1';
 const SPECIAL_USER_CODES = ['2026', 'STRACON2026', 'Mina2026!Admin'];
 
 export class AppController {
@@ -44,6 +45,7 @@ export class AppController {
     this.userAdjustedZoom = false;
     this.zoomLevel = this.getRecommendedZoom(); // 62% en celular, 68% tablet, 82% PC
     this.viewMode = 'operativo'; // 'operativo' (pestañas limpias) | 'ingenieria' (módulos M1..M6 + Levantadas)
+    this.designVersion = '1.1'; // '1.1' (Diseño STRACON Ejecutivo Limpio) | '1.0' (Diseño Original)
     this.activeModule = 'm1'; // En modo operativo inicia directo en M1 (Registrar Reporte)
     this.m1TableTab = 'activas'; // 'activas' | 'levantadas'
     this.showQuickProfileModal = false;
@@ -92,7 +94,10 @@ export class AppController {
     } else {
       this.viewMode = 'operativo';
     }
+    const savedDesign = localStorage.getItem(DESIGN_VERSION_STORAGE_KEY);
+    this.designVersion = savedDesign === '1.0' ? '1.0' : '1.1';
     this.applyBodyViewModeClass();
+    this.applyBodyDesignVersionClass();
 
     await this.refreshGlobalStats();
     this.renderShell();
@@ -112,6 +117,32 @@ export class AppController {
   applyBodyViewModeClass() {
     document.body.classList.toggle('view-mode-operativo', this.viewMode === 'operativo');
     document.body.classList.toggle('view-mode-ingenieria', this.viewMode === 'ingenieria');
+  }
+
+  applyBodyDesignVersionClass() {
+    document.body.classList.toggle('design-v1-1', this.designVersion === '1.1');
+  }
+
+  setDesignVersion(version) {
+    this.designVersion = version === '1.0' ? '1.0' : '1.1';
+    try {
+      localStorage.setItem(DESIGN_VERSION_STORAGE_KEY, this.designVersion);
+    } catch {
+      // Ignorar si almacenamiento restringido
+    }
+    this.applyBodyDesignVersionClass();
+    const btn10 = this.mountEl?.querySelector('#btn-design-v1-0');
+    const btn11 = this.mountEl?.querySelector('#btn-design-v1-1');
+    if (btn10) {
+      const is10 = this.designVersion === '1.0';
+      btn10.classList.toggle('active', is10);
+      btn10.setAttribute('aria-pressed', String(is10));
+    }
+    if (btn11) {
+      const is11 = this.designVersion === '1.1';
+      btn11.classList.toggle('active', is11);
+      btn11.setAttribute('aria-pressed', String(is11));
+    }
   }
 
   async setViewMode(mode, { switchUserEmail = null, switchUserPass = null, targetModule = null } = {}) {
@@ -288,6 +319,29 @@ export class AppController {
           </div>
 
           <div class="topbar-main-actions">
+            <div
+              class="design-version-switcher"
+              role="group"
+              aria-label="Versión de diseño visual"
+              title="Cambiar entre Diseño 1.0 (Original) y Diseño 1.1 (STRACON Ejecutivo Limpio)"
+            >
+              <button
+                type="button"
+                class="design-ver-btn ${this.designVersion === '1.0' ? 'active' : ''}"
+                id="btn-design-v1-0"
+                aria-pressed="${this.designVersion === '1.0'}"
+              >
+                Diseño 1.0
+              </button>
+              <button
+                type="button"
+                class="design-ver-btn ${this.designVersion === '1.1' ? 'active' : ''}"
+                id="btn-design-v1-1"
+                aria-pressed="${this.designVersion === '1.1'}"
+              >
+                Diseño 1.1
+              </button>
+            </div>
             <button
               type="button"
               class="btn-mine btn-sm-mine btn-topbar-sync ${syncBtnState.stateClass}"
@@ -1275,6 +1329,14 @@ export class AppController {
   }
 
   bindGlobalEvents() {
+    this.mountEl.querySelector('#btn-design-v1-0')?.addEventListener('click', () => {
+      this.setDesignVersion('1.0');
+    });
+
+    this.mountEl.querySelector('#btn-design-v1-1')?.addEventListener('click', () => {
+      this.setDesignVersion('1.1');
+    });
+
     this.mountEl.querySelector('#btn-topbar-sync')?.addEventListener('click', () => {
       this.handleManualSyncAndRefresh();
     });

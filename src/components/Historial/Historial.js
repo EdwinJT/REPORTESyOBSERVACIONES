@@ -678,9 +678,72 @@ export class HistorialModuleView {
       }
     }
 
+    // Fotos adjuntas en cada seguimiento bajo demanda
+    const followupPhotos = [];
+    for (let si = 0; si < repSegs.length; si++) {
+      const seg = repSegs[si];
+      const entries = this.getFollowupPhotoEntries(rep, seg, si);
+      if (entries.length === 0) continue;
+
+      const resolvedPhotos = await Promise.all(
+        entries.map(async (entry, pi) => {
+          const storagePath = entry.storagePath || `${rep.creado_por || 'campo'}/${rep.id}/seg_${si + 1}_${pi + 1}.jpg`;
+          let signedUrl = '';
+          let previewSrc = '';
+
+          if (entry.localBlob instanceof Blob && entry.localBlob.size > 0) {
+            previewSrc = URL.createObjectURL(entry.localBlob);
+            this.detailObjectUrls.push(previewSrc);
+          }
+
+          if (entry.storagePath && pwaManager.getState().isOnline) {
+            try {
+              const signedRes = await supabase.storage.from('fotos').createSignedUrl(entry.storagePath, 3600);
+              const rawUrl = signedRes?.data?.signedUrl || '';
+              if (/^https?:\/\//i.test(rawUrl) && !rawUrl.includes('/object/public/') && !rawUrl.includes('lazy_signed_')) {
+                signedUrl = rawUrl;
+                generatedUrlsCount++;
+                if (!previewSrc) previewSrc = rawUrl;
+              }
+            } catch {
+              // Usar respaldo SVG si falla la firma
+            }
+          }
+
+          if (!previewSrc) {
+            previewSrc = buildCloudPhotoPreviewDataUri({
+              codigoEquipo: rep.codigo_equipo,
+              fecha: seg.fecha || rep.fecha,
+              hora: '',
+              photoNumber: pi + 1,
+              totalPhotos: entries.length,
+              storagePath,
+              calidad: rep.calidad_compresion
+            });
+          }
+
+          return {
+            index: pi + 1,
+            storagePath,
+            signedUrl: signedUrl || previewSrc,
+            previewSrc
+          };
+        })
+      );
+
+      followupPhotos.push({
+        segIndex: si + 1,
+        fecha: seg.fecha || rep.fecha,
+        estado: seg.estado_seguimiento || 'Sigue observación',
+        comentario: seg.comentario || '',
+        photos: resolvedPhotos
+      });
+    }
+
     this.totalLazySignedUrlsSession += generatedUrlsCount;
     this.detailSignedMedia = {
       photos: signedPhotos,
+      followupPhotos,
       video: signedVideo,
       audios: signedAudios,
       loadedAtIso: new Date().toISOString(),
@@ -957,18 +1020,124 @@ export class HistorialModuleView {
     return this.resolveReportPrimaryThumbSrc(rep);
   }
 
+  getFollowupPhotoEntries(rep, seg, segIdx) {
+    const remotePaths = Array.isArray(seg?.fotos) ? seg.fotos.filter(Boolean) : [];
+    const localPhotos = Array.isArray(seg?.fotos_locales) ? seg.fotos_locales : [];
+    const total = Math.max(remotePaths.length, localPhotos.length);
+    const entries = [];
+    for (let pi = 0; pi < total; pi++) {
+      const localItem = localPhotos[pi] || null;
+      const storagePath = remotePaths[pi] || localItem?.ruta_remota || '';
+      const localBlob = localItem?.blob instanceof Blob && localItem.blob.size > 0 ? localItem.blob : null;
+      if (!storagePath && !localBlob) continue;
+      entries.push({
+        key: `seg:${rep.id}:${segIdx}:${pi}`,
+        segIdx,
+        photoIdx: pi,
+        storagePath,
+        localBlob,
+        fecha: seg?.fecha || rep.fecha
+      });
+    }
+    return entries;
+  }
+
+  getImmediateSegThumbSrc(rep, entry) {
+    if (this.thumbUrlMap.has(entry.key)) {
+      return this.thumbUrlMap.get(entry.key);
+    }
+    if (entry.localBlob) {
+      const objUrl = URL.createObjectURL(entry.localBlob);
+      this.objectUrls.push(objUrl);
+      this.thumbUrlMap.set(entry.key, objUrl);
+      return objUrl;
+    }
+    return buildCloudPhotoPreviewDataUri({
+      codigoEquipo: rep.codigo_equipo,
+      fecha: entry.fecha || rep.fecha,
+      hora: '',
+      photoNumber: entry.photoIdx + 1,
+      totalPhotos: 1,
+      storagePath: entry.storagePath || `${rep.creado_por || 'campo'}/${rep.id}/seg.jpg`,
+      calidad: rep.calidad_compresion
+    });
+  }
+
+  async resolveSegThumbSrc(rep, entry) {
+    if (this.thumbUrlMap.has(entry.key)) {
+      return this.thumbUrlMap.get(entry.key);
+    }
+    if (entry.localBlob) {
+      const objUrl = URL.createObjectURL(entry.localBlob);
+      this.objectUrls.push(objUrl);
+      this.thumbUrlMap.set(entry.key, objUrl);
+      return objUrl;
+    }
+    if (entry.storagePath && pwaManager.getState().isOnline) {
+      try {
+        const signed = await supabase.storage.from('fotos').createSignedUrl(entry.storagePath, 3600);
+        const signedUrl = signed?.data?.signedUrl || '';
+        if (/^https?:\/\//i.test(signedUrl) && !signedUrl.includes('/object/public/')) {
+          this.thumbUrlMap.set(entry.key, signedUrl);
+          return signedUrl;
+        }
+      } catch {
+        // Usar SVG si falla la firma
+      }
+    }
+    return this.getImmediateSegThumbSrc(rep, entry);
+  }
+
+  async resolveSegPrintThumbSrc(rep, entry) {
+    if (entry.localBlob) {
+      try {
+        const dataUri = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+          reader.onerror = () => reject(reader.error || new Error('FileReader error'));
+          reader.readAsDataURL(entry.localBlob);
+        });
+        if (dataUri) return dataUri;
+      } catch {
+        // Continuar con ruta remota si falla la conversión
+      }
+    }
+    return this.resolveSegThumbSrc(rep, entry);
+  }
+
   async hydrateVisibleThumbnails(reports = []) {
     if (!pwaManager.getState().isOnline || !Array.isArray(reports) || reports.length === 0) return;
     await Promise.all(
       reports.map(async (rep) => {
-        if (!rep?.id || this.thumbUrlMap.has(rep.id)) return;
-        const resolvedUrl = await this.resolveReportPrimaryThumbSrc(rep);
-        if (!resolvedUrl || !this.rootEl) return;
-        this.rootEl.querySelectorAll(`img[data-m6-thumb-id="${rep.id}"]`).forEach((imgEl) => {
-          if (imgEl.src !== resolvedUrl) {
-            imgEl.src = resolvedUrl;
+        if (!rep?.id) return;
+        if (!this.thumbUrlMap.has(rep.id)) {
+          const resolvedUrl = await this.resolveReportPrimaryThumbSrc(rep);
+          if (resolvedUrl && this.rootEl) {
+            this.rootEl.querySelectorAll(`img[data-m6-thumb-id="${rep.id}"]`).forEach((imgEl) => {
+              if (imgEl.src !== resolvedUrl) {
+                imgEl.src = resolvedUrl;
+              }
+            });
           }
-        });
+        }
+
+        const seguimientos = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
+        for (let si = 0; si < seguimientos.length; si++) {
+          const entries = this.getFollowupPhotoEntries(rep, seguimientos[si], si);
+          for (const entry of entries) {
+            if (this.thumbUrlMap.has(entry.key)) continue;
+            const resolvedSegUrl = await this.resolveSegThumbSrc(rep, entry);
+            if (resolvedSegUrl && this.rootEl) {
+              this.rootEl
+                .querySelectorAll(`img[data-m6-seg-thumb-key="${entry.key}"]`)
+                .forEach((imgEl) => {
+                  if (imgEl.src !== resolvedSegUrl) {
+                    imgEl.src = resolvedSegUrl;
+                  }
+                });
+            }
+          }
+        }
       })
     );
   }
@@ -1002,10 +1171,20 @@ export class HistorialModuleView {
     );
 
     const thumbMap = new Map();
+    const segThumbMap = new Map();
     await Promise.all(
       filtered.map(async (rep) => {
         const src = await this.resolvePrintThumbSrc(rep);
         thumbMap.set(rep.id, src);
+
+        const segs = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
+        for (let si = 0; si < segs.length; si++) {
+          const entries = this.getFollowupPhotoEntries(rep, segs[si], si);
+          for (const entry of entries) {
+            const segSrc = await this.resolveSegPrintThumbSrc(rep, entry);
+            segThumbMap.set(entry.key, segSrc);
+          }
+        }
       })
     );
 
@@ -1057,14 +1236,27 @@ export class HistorialModuleView {
               const prioBorder = prioUpper === 'ALTA' ? '#FCA5A5' : prioUpper === 'MEDIA' ? '#FCD34D' : '#7DD3FC';
 
               const segHtml = segs
-                .map(
-                  (s) => `
+                .map((s, si) => {
+                  const entries = this.getFollowupPhotoEntries(rep, s, si);
+                  const segPhotosHtml =
+                    entries.length > 0
+                      ? `<div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:4px;">${entries
+                          .map((entry) => {
+                            const sSrc = segThumbMap.get(entry.key) || '';
+                            return sSrc
+                              ? `<img src="${sSrc}" alt="Evidencia seguimiento" style="width:62px; height:44px; object-fit:cover; border:1px solid #94A3B8; border-radius:4px;" />`
+                              : '';
+                          })
+                          .join('')}</div>`
+                      : '';
+                  return `
                 <div style="margin-top:4px; padding:4px 6px; background:#FFF7ED; border-left:3px solid #F26522; font-size:11px;">
                   <strong>↳ ${this.escapeHtml(formatFechaDDMMYYYY(s.fecha))} (${this.escapeHtml(s.estado_seguimiento || 'Seguimiento')}):</strong>
                   ${this.escapeHtml(s.comentario || '')}
+                  ${segPhotosHtml}
                 </div>
-              `
-                )
+              `;
+                })
                 .join('');
 
               const levDateLine = lev
@@ -1882,6 +2074,16 @@ export class HistorialModuleView {
   }
 
   renderDesktopTable(reports) {
+    const groupByEquipo = (this.filters.orden || 'equipo') === 'equipo';
+    const groupCounts = new Map();
+    if (groupByEquipo) {
+      for (const r of reports) {
+        const key = `${this.isReportLevantada(r) ? 'LEV' : 'ACT'}|${r.codigo_equipo || 'SIN-EQUIPO'}`;
+        groupCounts.set(key, (groupCounts.get(key) || 0) + 1);
+      }
+    }
+    let lastGroupKey = '';
+
     return `
       <div class="table-responsive">
         <table class="m6-executive-table">
@@ -1928,7 +2130,26 @@ export class HistorialModuleView {
                   ? `<span class="m6-status-pill is-resolved">✅ Levantada</span>`
                   : `<span class="m6-status-pill is-active">⚠️ Activa</span>`;
 
-                return `
+                let groupHeaderHtml = '';
+                if (groupByEquipo) {
+                  const groupKey = `${isLev ? 'LEV' : 'ACT'}|${rep.codigo_equipo || 'SIN-EQUIPO'}`;
+                  if (groupKey !== lastGroupKey) {
+                    lastGroupKey = groupKey;
+                    const cnt = groupCounts.get(groupKey) || 1;
+                    groupHeaderHtml = `
+                      <tr class="m6-eq-group-row ${isLev ? 'is-resolved-group' : ''}">
+                        <td colspan="5">
+                          <div class="m6-eq-group-inner">
+                            <span>🚜 <strong>${this.escapeHtml(rep.codigo_equipo)}</strong></span>
+                            <span class="m6-eq-group-meta">${isLev ? '✅ Levantadas' : '⚠️ Activas'} • ${cnt} registro${cnt === 1 ? '' : 's'}</span>
+                          </div>
+                        </td>
+                      </tr>
+                    `;
+                  }
+                }
+
+                return `${groupHeaderHtml}
                 <tr>
                   <td>
                     <div class="m6-col-equipo-wrap">
@@ -1965,13 +2186,48 @@ export class HistorialModuleView {
                       ${
                         seguimientos.length > 0
                           ? seguimientos
-                              .map((seg) => {
+                              .map((seg, si) => {
                                 const segResolved =
                                   (seg.estado_seguimiento || '').toLowerCase().includes('levantada');
+                                const segEntries = this.getFollowupPhotoEntries(rep, seg, si);
+                                const segThumbsHtml =
+                                  segEntries.length > 0
+                                    ? `
+                                    <div class="m6-seg-thumbs-strip">
+                                      ${segEntries
+                                        .map((entry) => {
+                                          const segSrc = this.getImmediateSegThumbSrc(rep, entry);
+                                          return `
+                                            <button
+                                              type="button"
+                                              class="m6-seg-thumb-btn"
+                                              data-open-detail="${this.escapeAttr(rep.id)}"
+                                              title="Ver foto de seguimiento (${segEntries.length} foto(s))"
+                                            >
+                                              <img
+                                                class="m6-seg-inline-thumb"
+                                                src="${segSrc}"
+                                                data-m6-seg-thumb-key="${this.escapeAttr(entry.key)}"
+                                                data-m6-seg-rep="${this.escapeAttr(rep.id)}"
+                                                data-m6-seg-path="${this.escapeAttr(entry.storagePath)}"
+                                                alt="Foto seguimiento #${si + 1}"
+                                                loading="lazy"
+                                              />
+                                            </button>
+                                          `;
+                                        })
+                                        .join('')}
+                                      <span class="m6-seg-photo-badge">📷 ${segEntries.length} foto(s)</span>
+                                    </div>
+                                  `
+                                    : '';
                                 return `
                                 <div class="m6-inline-followup ${segResolved ? 'is-resolved' : ''}">
-                                  <strong>↳ ${this.escapeHtml(formatFechaDDMMYYYY(seg.fecha))} (${this.escapeHtml(seg.estado_seguimiento || 'Sigue observación')}):</strong>
-                                  <span>${this.escapeHtml(seg.comentario || '')}</span>
+                                  <div>
+                                    <strong>↳ ${this.escapeHtml(formatFechaDDMMYYYY(seg.fecha))} (${this.escapeHtml(seg.estado_seguimiento || 'Sigue observación')}):</strong>
+                                    <span>${this.escapeHtml(seg.comentario || '')}</span>
+                                  </div>
+                                  ${segThumbsHtml}
                                 </div>
                               `;
                               })
@@ -2076,10 +2332,10 @@ export class HistorialModuleView {
                     ? `
                   <div style="margin-top:0.5rem; padding-top:0.45rem; border-top:1px dashed #94a3b8; font-size:0.83rem;">
                     ${seguimientos
-                      .map(
-                        (s) =>
-                          `<div><strong>↳ ${formatFechaDDMMYYYY(s.fecha)} (${s.estado_seguimiento}):</strong> ${s.comentario}</div>`
-                      )
+                      .map((s, si) => {
+                        const segPhotoCount = this.getFollowupPhotoEntries(rep, s, si).length;
+                        return `<div><strong>↳ ${formatFechaDDMMYYYY(s.fecha)} (${this.escapeHtml(s.estado_seguimiento)}):</strong> ${this.escapeHtml(s.comentario)}${segPhotoCount > 0 ? ` <span class="m6-seg-photo-badge">📷 ${segPhotoCount} foto(s)</span>` : ''}</div>`;
+                      })
                       .join('')}
                   </div>
                 `
@@ -2291,6 +2547,58 @@ export class HistorialModuleView {
                     )
                     .join('')}
                 </div>
+
+                ${
+                  Array.isArray(media.followupPhotos) && media.followupPhotos.length > 0
+                    ? `
+                  <div class="m6-modal-seg-photos-section" style="margin-top:1rem;">
+                    <strong style="font-size:0.95rem; display:block; margin-bottom:0.55rem;">
+                      📷 Fotos de Seguimientos (${media.followupPhotos.reduce((acc, g) => acc + g.photos.length, 0)})
+                    </strong>
+                    <div style="display:flex; flex-direction:column; gap:0.8rem;">
+                      ${media.followupPhotos
+                        .map(
+                          (grp) => `
+                        <div class="m6-modal-seg-group">
+                          <div class="m6-modal-seg-group-hdr">
+                            <strong>↳ Seguimiento #${grp.segIndex} (${formatFechaDDMMYYYY(grp.fecha)} — ${this.escapeHtml(grp.estado)}):</strong>
+                            <span>${this.escapeHtml(grp.comentario)}</span>
+                          </div>
+                          <div class="m6-signed-photos-grid" style="margin-top:0.5rem;">
+                            ${grp.photos
+                              .map(
+                                (ph) => `
+                              <div class="m6-signed-photo-card">
+                                <div class="m6-signed-photo-img-wrap">
+                                  <img src="${this.escapeAttr(ph.previewSrc)}" alt="Seguimiento ${grp.segIndex} Foto ${ph.index}" />
+                                  <span class="m2-file-badge-overlay">Seg. #${grp.segIndex} • Foto #${ph.index}</span>
+                                </div>
+                                <div class="m6-signed-photo-info">
+                                  <a
+                                    href="${this.escapeAttr(ph.previewSrc)}"
+                                    download="${this.escapeAttr(rep.codigo_equipo)}_seg${grp.segIndex}_foto_${ph.index}.jpg"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    class="btn-mine btn-sm-mine btn-primary"
+                                    style="text-decoration:none; text-align:center; margin-top:0.2rem;"
+                                  >
+                                    ⬇️ Descargar Foto Seg. #${ph.index}
+                                  </a>
+                                </div>
+                              </div>
+                            `
+                              )
+                              .join('')}
+                          </div>
+                        </div>
+                      `
+                        )
+                        .join('')}
+                    </div>
+                  </div>
+                `
+                    : ''
+                }
 
                 ${
                   Array.isArray(media.audios) && media.audios.length > 0
@@ -2624,6 +2932,46 @@ export class HistorialModuleView {
           totalPhotos: Math.max(photoPaths.length, 1),
           storagePath: storagePath || `${rep.creado_por || 'campo'}/${rep.id}/1.jpg`,
           calidad: rep.calidad_compresion
+        });
+      });
+    });
+
+    // Respaldo si falla la carga de alguna miniatura de seguimiento
+    this.rootEl.querySelectorAll('img[data-m6-seg-thumb-key]').forEach((imgEl) => {
+      imgEl.addEventListener('error', async () => {
+        const key = imgEl.getAttribute('data-m6-seg-thumb-key');
+        const repId = imgEl.getAttribute('data-m6-seg-rep');
+        const storagePath = imgEl.getAttribute('data-m6-seg-path');
+        if (key) this.thumbUrlMap.delete(key);
+
+        if (imgEl.dataset.retrySigned !== '1' && storagePath && pwaManager.getState().isOnline) {
+          imgEl.dataset.retrySigned = '1';
+          try {
+            const cleanPath = String(storagePath).replace(/^\/+/, '');
+            supabase._signedUrlCache?.delete?.(`fotos/${cleanPath}`);
+            const signed = await supabase.storage.from('fotos').createSignedUrl(cleanPath, 3600);
+            const freshUrl = signed?.data?.signedUrl || '';
+            if (/^https?:\/\//i.test(freshUrl) && !freshUrl.includes('/object/public/')) {
+              if (key) this.thumbUrlMap.set(key, freshUrl);
+              imgEl.src = freshUrl;
+              return;
+            }
+          } catch {
+            // Continuar al respaldo SVG
+          }
+        }
+
+        if (imgEl.dataset.fallbackApplied === '1') return;
+        imgEl.dataset.fallbackApplied = '1';
+        const rep = this.unifiedReports.find((r) => r.id === repId);
+        imgEl.src = buildCloudPhotoPreviewDataUri({
+          codigoEquipo: rep?.codigo_equipo || 'EQUIPO',
+          fecha: rep?.fecha || '',
+          hora: '',
+          photoNumber: 1,
+          totalPhotos: 1,
+          storagePath: storagePath || 'seguimiento.jpg',
+          calidad: rep?.calidad_compresion
         });
       });
     });
