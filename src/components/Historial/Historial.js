@@ -95,16 +95,19 @@ export class HistorialModuleView {
       supervisor: ''
     };
 
-    // Filtros combinables de M6
+    // Filtros combinables de M6 (rangos independientes para Activas y Levantadas)
+    const hoyPeru = getFechaHoyPeru();
     this.filters = {
       codigoEquipo: 'TODOS',
       fechaDesde: '',
       fechaHasta: '',
+      levantadasDesde: hoyPeru,
+      levantadasHasta: hoyPeru,
       tipo: 'TODOS',
       prioridad: 'TODAS',
       origen: 'TODOS', // 'TODOS' | 'EN_NUBE' | 'OTROS_DISPOSITIVOS' | 'SOLO_LOCAL'
       estadoOperativo: 'TODOS', // 'TODOS' | 'ACTIVAS' | 'LEVANTADAS'
-      orden: 'prioridad', // 'prioridad' | 'equipo' | 'fecha'
+      orden: 'equipo', // 'equipo' | 'prioridad' | 'fecha'
       searchText: ''
     };
 
@@ -334,6 +337,53 @@ export class HistorialModuleView {
       .includes('levantada');
   }
 
+  /**
+   * Devuelve la fecha (YYYY-MM-DD) en que se levantó la observación
+   * (fecha del último seguimiento con estado Levantada, o la fecha del reporte como respaldo).
+   */
+  getReportLevantadaDate(rep) {
+    const segs = Array.isArray(rep?.seguimientos) ? rep.seguimientos : [];
+    for (let i = segs.length - 1; i >= 0; i--) {
+      const s = segs[i];
+      if (String(s?.estado_seguimiento || '').toLowerCase().includes('levantada') && s?.fecha) {
+        return String(s.fecha);
+      }
+    }
+    return String(rep?.fecha || '');
+  }
+
+  /**
+   * Agrupa una lista de reportes por código de equipo (orden alfanumérico natural),
+   * ordenando dentro de cada equipo por prioridad (Alta > Media > Baja) y fecha.
+   */
+  groupReportsByEquipo(reports = []) {
+    const prioRank = { Alta: 1, Media: 2, Baja: 3 };
+    const map = new Map();
+    for (const rep of reports) {
+      const code = String(rep?.codigo_equipo || 'SIN-CODIGO').trim() || 'SIN-CODIGO';
+      if (!map.has(code)) map.set(code, []);
+      map.get(code).push(rep);
+    }
+    return Array.from(map.entries())
+      .sort(([a], [b]) => a.localeCompare(b, 'es', { numeric: true, sensitivity: 'base' }))
+      .map(([codigo, items]) => ({
+        codigo,
+        items: items.sort((a, b) => {
+          const pDiff = (prioRank[a.prioridad] || 9) - (prioRank[b.prioridad] || 9);
+          if (pDiff !== 0) return pDiff;
+          return String(a.fecha || '').localeCompare(String(b.fecha || ''));
+        })
+      }));
+  }
+
+  formatDateRangeLabel(desde, hasta, emptyLabel = 'Todo el historial') {
+    if (!desde && !hasta) return emptyLabel;
+    if (desde && hasta && desde === hasta) return formatFechaDDMMYYYY(desde);
+    const dLbl = desde ? formatFechaDDMMYYYY(desde) : 'Inicio';
+    const hLbl = hasta ? formatFechaDDMMYYYY(hasta) : formatFechaDDMMYYYY(getFechaHoyPeru());
+    return `${dLbl} → ${hLbl}`;
+  }
+
   getOffsetDatePeru(daysAgo = 0) {
     return getFechaHoyPeru(new Date(Date.now() - daysAgo * 86400000));
   }
@@ -346,6 +396,8 @@ export class HistorialModuleView {
       codigoEquipo,
       fechaDesde,
       fechaHasta,
+      levantadasDesde,
+      levantadasHasta,
       tipo,
       prioridad,
       origen,
@@ -361,12 +413,30 @@ export class HistorialModuleView {
         return false;
       }
 
-      if (fechaDesde && String(rep.fecha || '') < fechaDesde) {
+      const isLev = this.isReportLevantada(rep);
+
+      if (estadoOperativo === 'ACTIVAS' && isLev) {
+        return false;
+      }
+      if (estadoOperativo === 'LEVANTADAS' && !isLev) {
         return false;
       }
 
-      if (fechaHasta && String(rep.fecha || '') > fechaHasta) {
-        return false;
+      if (isLev) {
+        const levFecha = this.getReportLevantadaDate(rep);
+        if (levantadasDesde && levFecha < levantadasDesde) {
+          return false;
+        }
+        if (levantadasHasta && levFecha > levantadasHasta) {
+          return false;
+        }
+      } else {
+        if (fechaDesde && String(rep.fecha || '') < fechaDesde) {
+          return false;
+        }
+        if (fechaHasta && String(rep.fecha || '') > fechaHasta) {
+          return false;
+        }
       }
 
       if (tipo && tipo !== 'TODOS' && rep.tipo !== tipo) {
@@ -374,13 +444,6 @@ export class HistorialModuleView {
       }
 
       if (prioridad && prioridad !== 'TODAS' && rep.prioridad !== prioridad) {
-        return false;
-      }
-
-      if (estadoOperativo === 'ACTIVAS' && this.isReportLevantada(rep)) {
-        return false;
-      }
-      if (estadoOperativo === 'LEVANTADAS' && !this.isReportLevantada(rep)) {
         return false;
       }
 
@@ -421,12 +484,21 @@ export class HistorialModuleView {
     });
 
     const prioRank = { Alta: 1, Media: 2, Baja: 3 };
-    const sortBy = orden || 'prioridad';
+    const sortBy = orden || 'equipo';
     return filtered.sort((a, b) => {
       if (sortBy === 'equipo') {
-        const eqCmp = String(a.codigo_equipo || '').localeCompare(String(b.codigo_equipo || ''));
+        const aLev = this.isReportLevantada(a);
+        const bLev = this.isReportLevantada(b);
+        if (aLev !== bLev) return aLev ? 1 : -1;
+        const eqCmp = String(a.codigo_equipo || '').localeCompare(
+          String(b.codigo_equipo || ''),
+          'es',
+          { numeric: true, sensitivity: 'base' }
+        );
         if (eqCmp !== 0) return eqCmp;
-        return String(b.fecha || '').localeCompare(String(a.fecha || ''));
+        const pDiff = (prioRank[a.prioridad] || 9) - (prioRank[b.prioridad] || 9);
+        if (pDiff !== 0) return pDiff;
+        return String(a.fecha || '').localeCompare(String(b.fecha || ''));
       }
       if (sortBy === 'fecha') {
         const dateCmp = String(b.fecha || '').localeCompare(String(a.fecha || ''));
@@ -929,67 +1001,135 @@ export class HistorialModuleView {
       '<p style="font-family:Arial,sans-serif;padding:24px;">⏳ Cargando fotos de evidencia para Entrega de Guardia...</p>'
     );
 
-    const thumbSrcs = await Promise.all(
-      filtered.map((rep) => this.resolvePrintThumbSrc(rep))
+    const thumbMap = new Map();
+    await Promise.all(
+      filtered.map(async (rep) => {
+        const src = await this.resolvePrintThumbSrc(rep);
+        thumbMap.set(rep.id, src);
+      })
     );
 
     const hoyFormatted = formatFechaDDMMYYYY(getFechaHoyPeru());
     const turno = this.escapeHtml(this.dailyMeta.turno);
     const zona = this.escapeHtml(this.dailyMeta.zona || 'Operaciones STRACON');
     const supervisor = this.escapeHtml(this.getEffectiveSupervisorName());
-    const desdeLbl = this.filters.fechaDesde ? formatFechaDDMMYYYY(this.filters.fechaDesde) : 'Inicio';
-    const hastaLbl = this.filters.fechaHasta ? formatFechaDDMMYYYY(this.filters.fechaHasta) : hoyFormatted;
+    const activasRangeLbl = this.formatDateRangeLabel(
+      this.filters.fechaDesde,
+      this.filters.fechaHasta,
+      'Todas las activas'
+    );
+    const levantadasRangeLbl = this.formatDateRangeLabel(
+      this.filters.levantadasDesde,
+      this.filters.levantadasHasta,
+      'Todas las levantadas'
+    );
 
-    const activasCount = filtered.filter((r) => !this.isReportLevantada(r)).length;
-    const criticosCount = filtered.filter((r) => !this.isReportLevantada(r) && r.prioridad === 'Alta').length;
-    const levantadasCount = filtered.filter((r) => this.isReportLevantada(r)).length;
+    const activasList = filtered.filter((r) => !this.isReportLevantada(r));
+    const levantadasList = filtered.filter((r) => this.isReportLevantada(r));
+    const activasCount = activasList.length;
+    const criticosCount = activasList.filter((r) => r.prioridad === 'Alta').length;
+    const levantadasCount = levantadasList.length;
 
-    const rowsHtml = filtered
-      .map((rep, idx) => {
-        const lev = this.isReportLevantada(rep);
-        const segs = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
-        const thumbSrc = thumbSrcs[idx];
-        const prioUpper = String(rep.prioridad || 'Media').toUpperCase();
-        const prioBg = prioUpper === 'ALTA' ? '#FEE2E2' : prioUpper === 'MEDIA' ? '#FEF3C7' : '#E0F2FE';
-        const prioFg = prioUpper === 'ALTA' ? '#991B1B' : prioUpper === 'MEDIA' ? '#92400E' : '#075985';
-        const prioBorder = prioUpper === 'ALTA' ? '#FCA5A5' : prioUpper === 'MEDIA' ? '#FCD34D' : '#7DD3FC';
-
-        const segHtml = segs
-          .map(
-            (s) => `
-          <div style="margin-top:4px; padding:4px 6px; background:#FFF7ED; border-left:3px solid #F26522; font-size:11px;">
-            <strong>↳ ${this.escapeHtml(formatFechaDDMMYYYY(s.fecha))} (${this.escapeHtml(s.estado_seguimiento || 'Seguimiento')}):</strong>
-            ${this.escapeHtml(s.comentario || '')}
-          </div>
-        `
-          )
-          .join('');
+    const buildGroupedSectionHtml = (sectionTitle, sectionClass, items, emptyText) => {
+      const groups = this.groupReportsByEquipo(items);
+      if (groups.length === 0) {
         return `
-          <tr>
-            <td>
-              <strong style="color:#002B5C;">${this.escapeHtml(rep.codigo_equipo)}</strong><br/>
-              <span>${this.escapeHtml(formatFechaDDMMYYYY(rep.fecha))}</span><br/>
-              <small style="color:#475569;">${this.escapeHtml(rep.hora_peru || '')}</small>
-            </td>
-            <td>
-              <img src="${thumbSrc}" alt="Evidencia" style="width:92px; height:62px; object-fit:cover; border:1px solid #94A3B8; border-radius:4px;" />
-            </td>
-            <td>
-              <strong>${this.escapeHtml(rep.observacion || '')}</strong>
-              ${segHtml}
-            </td>
-            <td style="text-align:center;">
-              <span style="display:inline-block; padding:2px 8px; border-radius:999px; font-weight:900; font-size:11px; background:${prioBg}; color:${prioFg}; border:1px solid ${prioBorder};">
-                ● ${this.escapeHtml(prioUpper)}
-              </span>
-            </td>
-            <td style="font-weight:900; color:${lev ? '#15803D' : '#C2410C'};">
-              ${lev ? '✅ Levantada' : '⚠️ Activa'}
-            </td>
-          </tr>
+          <div class="sec-title ${sectionClass}">${sectionTitle}</div>
+          <p style="margin:6px 0 18px 0; color:#475569; font-style:italic;">${emptyText}</p>
         `;
-      })
-      .join('');
+      }
+
+      const bodyRows = groups
+        .map((grp) => {
+          const groupHdr = `
+            <tr class="eq-group-row">
+              <td colspan="5">🚜 EQUIPO: <strong>${this.escapeHtml(grp.codigo)}</strong> (${grp.items.length} registro${grp.items.length === 1 ? '' : 's'})</td>
+            </tr>
+          `;
+          const itemRows = grp.items
+            .map((rep) => {
+              const lev = this.isReportLevantada(rep);
+              const segs = Array.isArray(rep.seguimientos) ? rep.seguimientos : [];
+              const thumbSrc = thumbMap.get(rep.id) || '';
+              const prioUpper = String(rep.prioridad || 'Media').toUpperCase();
+              const prioBg = prioUpper === 'ALTA' ? '#FEE2E2' : prioUpper === 'MEDIA' ? '#FEF3C7' : '#E0F2FE';
+              const prioFg = prioUpper === 'ALTA' ? '#991B1B' : prioUpper === 'MEDIA' ? '#92400E' : '#075985';
+              const prioBorder = prioUpper === 'ALTA' ? '#FCA5A5' : prioUpper === 'MEDIA' ? '#FCD34D' : '#7DD3FC';
+
+              const segHtml = segs
+                .map(
+                  (s) => `
+                <div style="margin-top:4px; padding:4px 6px; background:#FFF7ED; border-left:3px solid #F26522; font-size:11px;">
+                  <strong>↳ ${this.escapeHtml(formatFechaDDMMYYYY(s.fecha))} (${this.escapeHtml(s.estado_seguimiento || 'Seguimiento')}):</strong>
+                  ${this.escapeHtml(s.comentario || '')}
+                </div>
+              `
+                )
+                .join('');
+
+              const levDateLine = lev
+                ? `<br/><small style="color:#15803D; font-weight:700;">Levantada: ${this.escapeHtml(formatFechaDDMMYYYY(this.getReportLevantadaDate(rep)))}</small>`
+                : '';
+
+              return `
+                <tr>
+                  <td>
+                    <strong style="color:#002B5C;">${this.escapeHtml(rep.codigo_equipo)}</strong><br/>
+                    <span>${this.escapeHtml(formatFechaDDMMYYYY(rep.fecha))}</span>${levDateLine}
+                  </td>
+                  <td>
+                    <img src="${thumbSrc}" alt="Evidencia" style="width:92px; height:62px; object-fit:cover; border:1px solid #94A3B8; border-radius:4px;" />
+                  </td>
+                  <td>
+                    <strong>${this.escapeHtml(rep.observacion || '')}</strong>
+                    ${segHtml}
+                  </td>
+                  <td style="text-align:center;">
+                    <span style="display:inline-block; padding:2px 8px; border-radius:999px; font-weight:900; font-size:11px; background:${prioBg}; color:${prioFg}; border:1px solid ${prioBorder};">
+                      ● ${this.escapeHtml(prioUpper)}
+                    </span>
+                  </td>
+                  <td style="font-weight:900; color:${lev ? '#15803D' : '#C2410C'};">
+                    ${lev ? '✅ Levantada' : '⚠️ Activa'}
+                  </td>
+                </tr>
+              `;
+            })
+            .join('');
+          return groupHdr + itemRows;
+        })
+        .join('');
+
+      return `
+        <div class="sec-title ${sectionClass}">${sectionTitle}</div>
+        <table>
+          <thead>
+            <tr>
+              <th style="width:15%;">Equipo / Fecha</th>
+              <th style="width:13%;">Evidencia</th>
+              <th>Observación y Seguimiento (↳)</th>
+              <th style="width:12%;">Prioridad</th>
+              <th style="width:13%;">Estado</th>
+            </tr>
+          </thead>
+          <tbody>${bodyRows}</tbody>
+        </table>
+      `;
+    };
+
+    const activasSectionHtml = buildGroupedSectionHtml(
+      `⚠️ 1. OBSERVACIONES ACTIVAS (${activasCount}) — ${this.escapeHtml(activasRangeLbl)}`,
+      'sec-active',
+      activasList,
+      'No hay observaciones activas en el rango seleccionado.'
+    );
+
+    const levantadasSectionHtml = buildGroupedSectionHtml(
+      `✅ 2. OBSERVACIONES LEVANTADAS EN EL TURNO / PERIODO (${levantadasCount}) — ${this.escapeHtml(levantadasRangeLbl)}`,
+      'sec-resolved',
+      levantadasList,
+      'No hay observaciones levantadas en el rango seleccionado.'
+    );
 
     win.document.open();
     win.document.write(`
@@ -1001,13 +1141,17 @@ export class HistorialModuleView {
         <style>
           body { font-family: 'Segoe UI', Arial, sans-serif; color: #0F172A; margin: 20px; font-size: 12px; }
           .hdr { background: #002B5C; color: #FFFFFF; padding: 14px 18px; border-bottom: 4px solid #F26522; display: flex; justify-content: space-between; align-items: center; }
-          .meta { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; background: #F1F5F9; padding: 10px; border: 1px solid #CBD5E1; margin: 12px 0; }
+          .meta { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; background: #F1F5F9; padding: 10px; border: 1px solid #CBD5E1; margin: 12px 0; }
           .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; text-align: center; }
           .kpi { border: 1.5px solid #CBD5E1; padding: 8px; border-radius: 6px; }
-          table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+          .sec-title { font-size: 13px; font-weight: 900; padding: 7px 10px; border-radius: 6px; margin: 14px 0 6px 0; }
+          .sec-active { background: #FEF3C7; color: #92400E; border-left: 4px solid #F26522; }
+          .sec-resolved { background: #DCFCE7; color: #166534; border-left: 4px solid #16A34A; }
+          table { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
           th { background: #002B5C; color: #FFFFFF; padding: 7px; text-align: left; font-size: 11px; }
           td { border: 1px solid #CBD5E1; padding: 7px; vertical-align: top; }
-          .signs { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 36px; text-align: center; }
+          tr.eq-group-row td { background: #E2E8F0; color: #002B5C; font-size: 12px; padding: 6px 8px; border-top: 2px solid #002B5C; }
+          .signs { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; margin-top: 32px; text-align: center; }
           .sign-line { border-top: 1.5px solid #0F172A; padding-top: 6px; font-weight: 700; }
           @media print { .no-print { display: none; } }
         </style>
@@ -1021,7 +1165,7 @@ export class HistorialModuleView {
         <div class="hdr">
           <div>
             <div style="font-size:18px; font-weight:900;">STRACON · REPORTE DIARIO DE EQUIPOS</div>
-            <div style="font-size:11px; opacity:.88;">Entrega de Guardia y Seguimiento de Observaciones</div>
+            <div style="font-size:11px; opacity:.88;">Entrega de Guardia y Seguimiento de Observaciones (Agrupado por Equipo)</div>
           </div>
           <div style="text-align:right; font-weight:700;">Emisión: ${hoyFormatted}</div>
         </div>
@@ -1029,7 +1173,8 @@ export class HistorialModuleView {
           <div><strong>Proyecto / Frente:</strong><br/>${zona}</div>
           <div><strong>Turno / Guardia:</strong><br/>${turno}</div>
           <div><strong>Supervisor:</strong><br/>${supervisor}</div>
-          <div><strong>Periodo:</strong><br/>${this.escapeHtml(desdeLbl)} → ${this.escapeHtml(hastaLbl)}</div>
+          <div><strong>Rango Activas:</strong><br/>${this.escapeHtml(activasRangeLbl)}</div>
+          <div><strong>Rango Levantadas:</strong><br/>${this.escapeHtml(levantadasRangeLbl)}</div>
         </div>
         <div class="kpis">
           <div class="kpi"><div style="font-size:20px; font-weight:900; color:#002B5C;">${filtered.length}</div>Total Reportes</div>
@@ -1037,18 +1182,8 @@ export class HistorialModuleView {
           <div class="kpi"><div style="font-size:20px; font-weight:900; color:#C2410C;">${activasCount}</div>Activas</div>
           <div class="kpi"><div style="font-size:20px; font-weight:900; color:#15803D;">${levantadasCount}</div>Levantadas</div>
         </div>
-        <table>
-          <thead>
-            <tr>
-              <th>Equipo / Fecha</th>
-              <th>Evidencia</th>
-              <th>Observación y Seguimiento (↳)</th>
-              <th>Prioridad</th>
-              <th>Estado</th>
-            </tr>
-          </thead>
-          <tbody>${rowsHtml}</tbody>
-        </table>
+        ${activasSectionHtml}
+        ${levantadasSectionHtml}
         <div class="signs">
           <div class="sign-line">Elaborado por: ${supervisor}<br/><small>Supervisión de Operaciones</small></div>
           <div class="sign-line">Recibido por: Jefe de Guardia / Mantenimiento<br/><small>Conformidad de Entrega</small></div>
@@ -1060,7 +1195,8 @@ export class HistorialModuleView {
   }
 
   /**
-   * Copia un resumen diario estructurado al portapapeles para pegarlo en WhatsApp de Guardia/Mantenimiento.
+   * Copia un resumen diario estructurado al portapapeles agrupado por código de equipo
+   * para pegarlo en WhatsApp de Guardia/Mantenimiento.
    */
   async handleCopyWhatsAppSummary() {
     const filtered = this.getFilteredReports();
@@ -1072,36 +1208,58 @@ export class HistorialModuleView {
       return;
     }
 
-    const hoyFormatted = formatFechaDDMMYYYY(getFechaHoyPeru());
-    const desdeLbl = this.filters.fechaDesde ? formatFechaDDMMYYYY(this.filters.fechaDesde) : 'Inicio';
-    const hastaLbl = this.filters.fechaHasta ? formatFechaDDMMYYYY(this.filters.fechaHasta) : hoyFormatted;
+    const activasRangeLbl = this.formatDateRangeLabel(
+      this.filters.fechaDesde,
+      this.filters.fechaHasta,
+      'Todas las activas'
+    );
+    const levantadasRangeLbl = this.formatDateRangeLabel(
+      this.filters.levantadasDesde,
+      this.filters.levantadasHasta,
+      'Todas las levantadas'
+    );
     const activas = filtered.filter((r) => !this.isReportLevantada(r));
     const levantadas = filtered.filter((r) => this.isReportLevantada(r));
 
     const lines = [
       `🚜 *REPORTE DIARIO DE EQUIPOS — STRACON*`,
       `📍 ${this.dailyMeta.zona || 'Operaciones STRACON'} | ${this.dailyMeta.turno}`,
-      `📅 Periodo: ${desdeLbl} → ${hastaLbl} | 👷 ${this.getEffectiveSupervisorName()}`,
+      `📅 Activas: ${activasRangeLbl} | Levantadas: ${levantadasRangeLbl}`,
+      `👷 ${this.getEffectiveSupervisorName()}`,
       `📊 *Resumen:* ${filtered.length} total · ⚠️ ${activas.length} Activas · ✅ ${levantadas.length} Levantadas`,
       ''
     ];
 
     if (activas.length > 0) {
-      lines.push(`*⚠️ OBSERVACIONES ACTIVAS:*`);
-      activas.forEach((r) => {
-        const segs = Array.isArray(r.seguimientos) ? r.seguimientos : [];
-        const lastSeg = segs.length > 0 ? segs[segs.length - 1] : null;
-        const segNote = lastSeg?.comentario ? ` _(↳ ${lastSeg.comentario})_` : '';
-        lines.push(`• *${r.codigo_equipo}* [${String(r.prioridad || '').toUpperCase()}]: ${r.observacion}${segNote}`);
+      lines.push(`*⚠️ OBSERVACIONES ACTIVAS (${activas.length}):*`);
+      const activasGroups = this.groupReportsByEquipo(activas);
+      activasGroups.forEach((grp) => {
+        lines.push(`🚜 *${grp.codigo}*`);
+        grp.items.forEach((r) => {
+          const segs = Array.isArray(r.seguimientos) ? r.seguimientos : [];
+          const lastSeg = segs.length > 0 ? segs[segs.length - 1] : null;
+          const segNote = lastSeg?.comentario ? ` _(↳ ${lastSeg.comentario})_` : '';
+          lines.push(`  • [${String(r.prioridad || '').toUpperCase()}] ${r.observacion}${segNote}`);
+        });
       });
       lines.push('');
     }
 
     if (levantadas.length > 0) {
-      lines.push(`*✅ OBSERVACIONES LEVANTADAS:*`);
-      levantadas.forEach((r) => {
-        lines.push(`• *${r.codigo_equipo}*: ${r.observacion}`);
+      lines.push(`*✅ OBSERVACIONES LEVANTADAS (${levantadasRangeLbl}):*`);
+      const levantadasGroups = this.groupReportsByEquipo(levantadas);
+      levantadasGroups.forEach((grp) => {
+        lines.push(`🚜 *${grp.codigo}*`);
+        grp.items.forEach((r) => {
+          const segs = Array.isArray(r.seguimientos) ? r.seguimientos : [];
+          const lastSeg = segs.length > 0 ? segs[segs.length - 1] : null;
+          const cierreNote = lastSeg?.comentario ? ` _(↳ ${lastSeg.comentario})_` : '';
+          lines.push(`  • ${r.observacion}${cierreNote}`);
+        });
       });
+    } else {
+      lines.push(`*✅ OBSERVACIONES LEVANTADAS (${levantadasRangeLbl}):*`);
+      lines.push(`  • Sin observaciones levantadas en este periodo.`);
     }
 
     const summaryText = lines.join('\n');
@@ -1109,7 +1267,7 @@ export class HistorialModuleView {
       await navigator.clipboard.writeText(summaryText);
       this.setBanner(
         'success',
-        `📋 Resumen diario (${filtered.length} reportes) copiado al portapapeles — listo para pegar en WhatsApp.`
+        `📋 Resumen diario agrupado por equipo (${activas.length} activas, ${levantadas.length} levantadas) copiado al portapapeles para WhatsApp.`
       );
     } catch {
       window.prompt('Copia el resumen diario para WhatsApp:', summaryText);
@@ -1326,12 +1484,21 @@ export class HistorialModuleView {
     const is3dPreset = this.filters.fechaDesde === hace3d && this.filters.fechaHasta === hoy;
     const is7dPreset = this.filters.fechaDesde === hace7d && this.filters.fechaHasta === hoy;
     const isTodoPreset = !this.filters.fechaDesde && !this.filters.fechaHasta;
+    const isLevHoyPreset =
+      this.filters.levantadasDesde === hoy && this.filters.levantadasHasta === hoy;
+    const isLevTodoPreset = !this.filters.levantadasDesde && !this.filters.levantadasHasta;
 
-    const periodRangeLabel = isTodoPreset
-      ? 'Mostrando todas las fechas'
-      : isHoyPreset
-        ? `Mostrando solo hoy (${hoyFormatted})`
-        : `Periodo: ${this.filters.fechaDesde ? formatFechaDDMMYYYY(this.filters.fechaDesde) : 'Inicio'} → ${this.filters.fechaHasta ? formatFechaDDMMYYYY(this.filters.fechaHasta) : hoyFormatted}`;
+    const activasRangeLbl = this.formatDateRangeLabel(
+      this.filters.fechaDesde,
+      this.filters.fechaHasta,
+      'Todas'
+    );
+    const levantadasRangeLbl = this.formatDateRangeLabel(
+      this.filters.levantadasDesde,
+      this.filters.levantadasHasta,
+      'Todas'
+    );
+    const periodRangeLabel = `Activas: ${activasRangeLbl} · Levantadas: ${levantadasRangeLbl}`;
 
     // Conteo por código de equipo en el historial unificado
     const countByEquipo = {};
@@ -1459,7 +1626,7 @@ export class HistorialModuleView {
             <!-- Barra de Rango Rápido + Ordenamiento -->
             <div class="m6-quick-range-bar">
               <div class="m6-quick-presets-left">
-                <span class="m6-inline-label">⚡ RANGO RÁPIDO:</span>
+                <span class="m6-inline-label">⚡ ACTIVAS:</span>
                 <button type="button" class="m6-preset-btn ${isHoyPreset ? 'is-active' : ''}" id="btn-m6-date-today">
                   Solo Hoy (${hoyShort})
                 </button>
@@ -1470,17 +1637,17 @@ export class HistorialModuleView {
                   Últimos 7 días
                 </button>
                 <button type="button" class="m6-preset-btn ${isTodoPreset ? 'is-active' : ''}" id="btn-m6-date-all">
-                  Todo el historial
+                  Todas las activas
                 </button>
               </div>
 
               <div class="m6-quick-sort-right">
                 <select id="m6-filter-orden" class="form-control m6-sort-select" aria-label="Ordenar reportes">
+                  <option value="equipo" ${this.filters.orden === 'equipo' ? 'selected' : ''}>Ordenar: Por Equipo (agrupado)</option>
                   <option value="prioridad" ${this.filters.orden === 'prioridad' ? 'selected' : ''}>Ordenar: Críticos primero</option>
-                  <option value="equipo" ${this.filters.orden === 'equipo' ? 'selected' : ''}>Ordenar: Por Equipo</option>
                   <option value="fecha" ${this.filters.orden === 'fecha' ? 'selected' : ''}>Ordenar: Más recientes</option>
                 </select>
-                <button type="button" class="m6-preset-btn" id="btn-m6-clear-filters" title="Limpiar filtros">
+                <button type="button" class="m6-preset-btn" id="btn-m6-clear-filters" title="Restablecer filtros del turno">
                   🧹 Limpiar
                 </button>
                 <button type="button" class="m6-preset-btn" id="btn-m6-refresh-cloud" title="Refrescar desde Supabase Cloud">
@@ -1489,26 +1656,71 @@ export class HistorialModuleView {
               </div>
             </div>
 
-            <!-- Filtros Horizontales (Fecha Desde / Fecha Hasta / Equipo / Estado) -->
+            <!-- Filtros Horizontales: Rango Activas + Rango Levantadas (Turno) -->
+            <div class="m6-dual-date-grid">
+              <div class="m6-date-group-box is-active-group">
+                <div class="m6-date-group-hdr">
+                  <span>⚠️ Rango Observaciones Activas</span>
+                </div>
+                <div class="m6-date-pair-row">
+                  <div class="m6-field-item">
+                    <label class="m6-field-label" for="m6-filter-desde">📅 ACTIVAS DESDE</label>
+                    <input
+                      type="date"
+                      id="m6-filter-desde"
+                      class="form-control"
+                      value="${this.escapeAttr(this.filters.fechaDesde)}"
+                    />
+                  </div>
+                  <div class="m6-field-item">
+                    <label class="m6-field-label" for="m6-filter-hasta">📅 ACTIVAS HASTA</label>
+                    <input
+                      type="date"
+                      id="m6-filter-hasta"
+                      class="form-control"
+                      value="${this.escapeAttr(this.filters.fechaHasta)}"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div class="m6-date-group-box is-resolved-group">
+                <div class="m6-date-group-hdr">
+                  <span>✅ Rango Observaciones Levantadas</span>
+                  <div class="m6-date-mini-presets">
+                    <button type="button" class="m6-preset-btn m6-preset-mini ${isLevHoyPreset ? 'is-active' : ''}" id="btn-m6-lev-today">
+                      Turno Hoy (${hoyShort})
+                    </button>
+                    <button type="button" class="m6-preset-btn m6-preset-mini ${isLevTodoPreset ? 'is-active' : ''}" id="btn-m6-lev-all">
+                      Todas
+                    </button>
+                  </div>
+                </div>
+                <div class="m6-date-pair-row">
+                  <div class="m6-field-item">
+                    <label class="m6-field-label" for="m6-filter-lev-desde">✅ LEVANTADAS DESDE</label>
+                    <input
+                      type="date"
+                      id="m6-filter-lev-desde"
+                      class="form-control"
+                      value="${this.escapeAttr(this.filters.levantadasDesde)}"
+                    />
+                  </div>
+                  <div class="m6-field-item">
+                    <label class="m6-field-label" for="m6-filter-lev-hasta">✅ LEVANTADAS HASTA</label>
+                    <input
+                      type="date"
+                      id="m6-filter-lev-hasta"
+                      class="form-control"
+                      value="${this.escapeAttr(this.filters.levantadasHasta)}"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Equipo / Estado / Buscador -->
             <div class="m6-filters-horizontal-grid">
-              <div class="m6-field-item">
-                <label class="m6-field-label" for="m6-filter-desde">📅 FECHA DESDE</label>
-                <input
-                  type="date"
-                  id="m6-filter-desde"
-                  class="form-control"
-                  value="${this.escapeAttr(this.filters.fechaDesde)}"
-                />
-              </div>
-              <div class="m6-field-item">
-                <label class="m6-field-label" for="m6-filter-hasta">📅 FECHA HASTA</label>
-                <input
-                  type="date"
-                  id="m6-filter-hasta"
-                  class="form-control"
-                  value="${this.escapeAttr(this.filters.fechaHasta)}"
-                />
-              </div>
               <div class="m6-field-item">
                 <label class="m6-field-label" for="m6-filter-equipo">🚜 EQUIPO</label>
                 <select id="m6-filter-equipo" class="form-control">
@@ -1533,10 +1745,6 @@ export class HistorialModuleView {
                   <option value="LEVANTADAS" ${this.filters.estadoOperativo === 'LEVANTADAS' ? 'selected' : ''}>✅ Solo Levantadas</option>
                 </select>
               </div>
-            </div>
-
-            <!-- Buscador + Filtro Técnico -->
-            <div class="m6-search-row">
               <div class="m6-field-item m6-search-field">
                 <label class="m6-field-label" for="m6-filter-search">🔍 BUSCAR EN TEXTO</label>
                 <input
@@ -2223,11 +2431,54 @@ export class HistorialModuleView {
 
     this.rootEl.querySelector('#m6-filter-desde')?.addEventListener('change', (e) => {
       this.filters.fechaDesde = e.target.value;
+      if (this.filters.fechaDesde && this.filters.fechaHasta && this.filters.fechaDesde > this.filters.fechaHasta) {
+        this.filters.fechaHasta = this.filters.fechaDesde;
+      }
       this.render();
     });
 
     this.rootEl.querySelector('#m6-filter-hasta')?.addEventListener('change', (e) => {
       this.filters.fechaHasta = e.target.value;
+      if (this.filters.fechaDesde && this.filters.fechaHasta && this.filters.fechaHasta < this.filters.fechaDesde) {
+        this.filters.fechaDesde = this.filters.fechaHasta;
+      }
+      this.render();
+    });
+
+    this.rootEl.querySelector('#m6-filter-lev-desde')?.addEventListener('change', (e) => {
+      this.filters.levantadasDesde = e.target.value;
+      if (
+        this.filters.levantadasDesde &&
+        this.filters.levantadasHasta &&
+        this.filters.levantadasDesde > this.filters.levantadasHasta
+      ) {
+        this.filters.levantadasHasta = this.filters.levantadasDesde;
+      }
+      this.render();
+    });
+
+    this.rootEl.querySelector('#m6-filter-lev-hasta')?.addEventListener('change', (e) => {
+      this.filters.levantadasHasta = e.target.value;
+      if (
+        this.filters.levantadasDesde &&
+        this.filters.levantadasHasta &&
+        this.filters.levantadasHasta < this.filters.levantadasDesde
+      ) {
+        this.filters.levantadasDesde = this.filters.levantadasHasta;
+      }
+      this.render();
+    });
+
+    this.rootEl.querySelector('#btn-m6-lev-today')?.addEventListener('click', () => {
+      const hoy = getFechaHoyPeru();
+      this.filters.levantadasDesde = hoy;
+      this.filters.levantadasHasta = hoy;
+      this.render();
+    });
+
+    this.rootEl.querySelector('#btn-m6-lev-all')?.addEventListener('click', () => {
+      this.filters.levantadasDesde = '';
+      this.filters.levantadasHasta = '';
       this.render();
     });
 
@@ -2283,23 +2534,26 @@ export class HistorialModuleView {
       this.render();
     });
 
-    const resetFilters = () => {
+    const resetFilters = (includeAllLevantadas = false) => {
+      const hoy = getFechaHoyPeru();
       this.filters = {
         codigoEquipo: 'TODOS',
         fechaDesde: '',
         fechaHasta: '',
+        levantadasDesde: includeAllLevantadas ? '' : hoy,
+        levantadasHasta: includeAllLevantadas ? '' : hoy,
         tipo: 'TODOS',
         prioridad: 'TODAS',
         origen: 'TODOS',
         estadoOperativo: 'TODOS',
-        orden: 'prioridad',
+        orden: 'equipo',
         searchText: ''
       };
       this.render();
     };
 
-    this.rootEl.querySelector('#btn-m6-clear-filters')?.addEventListener('click', resetFilters);
-    this.rootEl.querySelector('#btn-m6-empty-reset')?.addEventListener('click', resetFilters);
+    this.rootEl.querySelector('#btn-m6-clear-filters')?.addEventListener('click', () => resetFilters(false));
+    this.rootEl.querySelector('#btn-m6-empty-reset')?.addEventListener('click', () => resetFilters(true));
 
     // Clic rápido en el Catálogo Compartido de Equipos
     this.rootEl.querySelectorAll('[data-filter-eq]').forEach((btn) => {

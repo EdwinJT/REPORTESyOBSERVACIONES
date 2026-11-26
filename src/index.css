@@ -4528,3 +4528,68 @@ body.theme-night .table-audio-label {
   min-width: 160px;
   max-width: 320px;
 }
+
+/* M6 — Doble rango de fechas (Activas vs Levantadas en el turno) */
+.m6-dual-date-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.m6-date-group-box {
+  background: var(--bg-card);
+  border: 1.5px solid var(--border-subtle);
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+}
+
+.m6-date-group-box.is-active-group {
+  border-left: 4px solid #F26522;
+}
+
+.m6-date-group-box.is-resolved-group {
+  border-left: 4px solid #16A34A;
+}
+
+.m6-date-group-hdr {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  margin-bottom: 0.45rem;
+  font-size: 0.82rem;
+  font-weight: 900;
+  color: var(--text-main);
+}
+
+.m6-date-mini-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.m6-preset-btn.m6-preset-mini {
+  padding: 0.18rem 0.55rem;
+  font-size: 0.76rem;
+  min-height: 28px;
+}
+
+.m6-date-pair-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+@media (max-width: 900px) {
+  .m6-dual-date-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .m6-date-pair-row {
+    grid-template-columns: 1fr;
+  }
+}
